@@ -1,3 +1,4 @@
+from collections import defaultdict
 from multiprocessing.pool import Pool
 
 import cython
@@ -39,6 +40,12 @@ cdef char valid_pair(bytes b1, bytes b2):
         return 0
 
 
+cdef class WartsFile:
+    def __init__(self, filename, monitor):
+        self.filename = filename
+        self.monitor = monitor
+
+
 cdef class VRFinder:
 
     def __init__(self, IP2AS ip2as):
@@ -75,7 +82,7 @@ cdef class VRFinder:
         if twos is None:
             twos = set()
         if fours is None:
-            fours = set()
+            fours = defaultdict(set)
         with WartsReader(filename) as f:
             for trace in f:
                 trace.prune_dups()
