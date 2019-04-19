@@ -67,21 +67,25 @@ def candidates_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
     global _ip2as
     if ip2as is not None:
         _ip2as = ip2as
+    addrs = set()
+    adjs = set()
     twos = set()
     fours = defaultdict(set)
     ixps = set()
     cycles = set()
     files = [wf.filename for wf in filenames]
-    pb = Progress(len(filenames), message='Reading traceroutes', callback=lambda: 'Twos {:,d} Fours {:,d} IXPs {:,d} Cycles {:,d}'.format(len(twos), len(fours), len(ixps), len(cycles)))
+    pb = Progress(len(filenames), message='Reading traceroutes', callback=lambda: 'A1 {:,d} A2 {:,d} 2 {:,d} 4 {:,d} X {:,d} C {:,d}'.format(len(addrs), len(adjs), len(twos), len(fours), len(ixps), len(cycles)))
     with Pool(poolsize) as pool:
-        for wf, (newtwos, newfours, newixps, newcycles) in pb.iterator(zip(filenames, pool.imap(candidates, files))):
+        for wf, (newaddrs, newadjs, newtwos, newfours, newixps, newcycles) in pb.iterator(zip(filenames, pool.imap(candidates, files))):
+            addrs.update(newaddrs)
+            adjs.update(newadjs)
             twos.update(newtwos)
             # fours.update(newfours)
             for pair in newfours:
                 fours[pair].add(wf.monitor)
             ixps.update(newixps)
             cycles.update(newcycles)
-    return twos, fours, ixps, cycles
+    return addrs, adjs, twos, fours, ixps, cycles
 
 
 def candidates_sequential(filenames: List[WartsFile], ip2as=None):
@@ -112,6 +116,8 @@ def candidates(filename: str, ip2as=None, twos=None, fours=None, ixps=None, cycl
         ixps = set()
     if cycles is None:
         cycles = set()
+    addrs = set()
+    links = set()
     with WartsReader(filename) as f:
         for trace in f:
             seen = set()
@@ -122,6 +128,7 @@ def candidates(filename: str, ip2as=None, twos=None, fours=None, ixps=None, cycl
                 x: Hop = hops[i]
                 bx = packed[i]
                 xaddr = x.addr
+                addrs.add(xaddr)
                 if xaddr in seen:
                     cycle = [(x.addr, x.reply_ttl)]
                     for j in range(i-1, -1, -1):
@@ -133,6 +140,7 @@ def candidates(filename: str, ip2as=None, twos=None, fours=None, ixps=None, cycl
                     break
                 seen.add(xaddr)
                 y: Hop = hops[i+1]
+                links.add((xaddr, y.addr))
                 by = packed[i+1]
                 xasn = _ip2as.asn_packed(bx)
                 yasn = _ip2as.asn_packed(by)
@@ -146,11 +154,11 @@ def candidates(filename: str, ip2as=None, twos=None, fours=None, ixps=None, cycl
                         size = valid_pair(bx, by)
                         if size != 0:
                             pair = (trace.hops[i].addr, trace.hops[i+1].addr)
-                            if size == 2:
+                            if size == 2 or size == -2:
                                 twos.add(pair)
-                            elif size == 4:
+                            elif size == 4 or size == -4:
                                 fours.add(pair)
-    return twos, fours, ixps, cycles
+    return addrs, links, twos, fours, ixps, cycles
 
 
 def mplstest(filename, ip2as):
