@@ -23,7 +23,7 @@ class PingTest:
         self.responses = {}
 
     def read_responses_all(self, poolsize=35):
-        pb = Progress(len(self.files), 'Reading pings', callback=lambda: 'Responses {:,d}'.format(sum(self.responses.values())))
+        pb = Progress(len(self.files), 'Reading pings', callback=lambda: 'Responses {:,d}'.format(sum(self._responses.values())))
         with Pool(poolsize) as pool:
             for responses in pb.iterator(pool.imap_unordered(read_responses, self.files)):
                 for a, b in responses.items():

@@ -140,22 +140,20 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                         xaddr = x.addr
                         yaddr = y.addr
                         xasn = _ip2as.asn_packed(b1)
-                        # if y.icmp_type != 0:
-                        if x.probe_ttl == y.probe_ttl - 1:
-                            if xasn >= 0:
-                                if are_adjacent(b1, b2):
-                                    size = valid_pair(b1, b2)
-                                    if size != 0:
-                                        if size == -2 or size == 2:
-                                            info.twos.add(xaddr)
-                                        elif size == -4 or size == 4:
-                                            info.fours.add(xaddr)
-                            elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
-                                if i > 0:
-                                    wasn = _ip2as.asn_packed(packed[i-1])
-                                else:
-                                    wasn = None
-                                info.ixps.add((wasn, xaddr, yaddr))
+                        if xasn >= 0:
+                            if are_adjacent(b1, b2):
+                                size = valid_pair(b1, b2)
+                                if size != 0:
+                                    if size == -2 or size == 2:
+                                        info.twos.add(xaddr)
+                                    elif size == -4 or size == 4:
+                                        info.fours.add(xaddr)
+                        elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
+                            if i > 0:
+                                wasn = _ip2as.asn_packed(packed[i-1])
+                            else:
+                                wasn = None
+                            info.ixps.add((wasn, xaddr, yaddr))
                         if x.probe_ttl == y.probe_ttl - 1:
                             info.nexthop.add(xaddr)
                         else:
