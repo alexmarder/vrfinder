@@ -1,4 +1,9 @@
+from collections import namedtuple
+
 from finder import CandidateInfo
+
+
+Row = namedtuple('Row', ['tp', 'fp', 'fn', 'tn', 'ppv', 'recall', 'total'])
 
 
 class VerifyInfo:
@@ -40,6 +45,14 @@ class VerifyInfo:
         if denom == 0:
             return float('nan')
         return self.tp / denom
+
+    @property
+    def total(self):
+        return self.tp + self.fp + self.fn + self.tn
+
+    @property
+    def row(self):
+        return Row(self.tp, self.fp, self.fn, self.tn, self.ppv, self.recall, self.total)
 
 
 def validate(alladdrs, candidates: CandidateInfo, valid, vpn, default, ixps, prev):
