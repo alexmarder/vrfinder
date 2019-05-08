@@ -172,6 +172,41 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
     return info
 
 
+def search(filename, ip2as=None):
+    global _ip2as
+    if ip2as is not None:
+        _ip2as = ip2as
+    with WartsReader(filename) as f:
+        for trace in f:
+            if trace.hops:
+                trace.prune_private(_ip2as)
+                if trace.hops:
+                    # trace.prune_dups()
+                    trace.prune_loops()
+                    packed = [hop.set_packed() for hop in trace.hops]
+                    for i in range(len(packed) - 1):
+                        x = trace.hops[i]
+                        y = trace.hops[i + 1]
+                        xaddr = x.addr
+                        yaddr = y.addr
+                        if xaddr == '2001:468:fc:24::2' and yaddr == '2001:468:fc:24::1':
+                            return trace
+    return None
+
+
+def search_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
+    global _ip2as
+    if ip2as is not None:
+        _ip2as = ip2as
+    files = [wf.filename for wf in filenames]
+    pb = Progress(len(filenames), message='Searching')
+    with Pool(poolsize) as pool:
+        for trace in pb.iterator(pool.imap_unordered(search, files)):
+            if trace is not None:
+                return trace
+    return None
+
+
 def mplstest(filename, ip2as):
     bins = defaultdict(bool)
     test = defaultdict(set)

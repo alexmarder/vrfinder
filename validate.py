@@ -74,6 +74,7 @@ class VerifyInfo:
 
 
 class Validate:
+
     def __init__(self, ip2as: IP2AS, as2org: AS2Org, peeringdb: PeeringDB):
         self.ip2as = ip2as
         self.as2org = as2org
@@ -94,7 +95,7 @@ class Validate:
                     return True
         return False
 
-    def validate(self, alladdrs, candidates: CandidateInfo, valid, vpn, default, ixps, prev, tasn):
+    def validate(self, alladdrs, candidates: CandidateInfo, valid, vpn, default, ixps, prev, tasn) -> VerifyInfo:
         # print('hello')
         vi = VerifyInfo()
         torg = self.as2org[tasn]
@@ -132,41 +133,47 @@ class Validate:
         return vi
 
 
-def validate(alladdrs, candidates: CandidateInfo, valid, vpn, default, ixps, prev):
-    # print('hello')
-    vi = VerifyInfo()
-    gtaddrs = vpn | default
-    addrs = gtaddrs & alladdrs
-    for addr in addrs:
-        pos = False
-        # if addr == '2001:468:f000:2707::1':
-        #     print('here')
-        if addr in candidates.twos:
-            pos = True
-        elif addr in candidates.fours:
-            if valid[addr] > 1:
-                pos = True
+class ValidateIPs:
+
+    def __init__(self, validate, candidates: CandidateInfo, valid: Dict[str, bool], prev: Dict[str, Set[str]]):
+        self.val = validate
+        self.candidates = candidates
+        self.valid = valid
+        self.prev = prev
+        self.alladdrs = candidates.alladdrs()
+        self.middle = candidates.middle()
+        self.middleecho = candidates.middle_echo()
+
+    def breakdown(self, vpn, default, ixps, tasn):
+        allixps = self.candidates.ixpaddrs()
+        val: VerifyInfo = self.val.validate(self.alladdrs, self.candidates, self.valid, vpn, default, ixps, self.prev, tasn)
+        rows = []
+        for addr in val.tps | val.fps | val.fns | val.tns:
+            if addr in val.tps:
+                res = 'tp'
+            elif addr in val.fps:
+                res = 'fp'
+            elif addr in val.fns:
+                res = 'fn'
             else:
-                pos = False
-            # if addr == '2001:468:f000:2707::1':
-            #     print(pos)
-        elif addr in ixps:
-            pos = True
-        if not (addr in prev and prev[addr] & vpn):
-            continue
-        if addr in vpn or addr in ['163.253.70.1']:
-            if pos:
-                vi.tps.add(addr)
-            elif addr in prev and addr != '198.71.47.83':
-                # if prev[addr] & vpn:
-                # if any(x in gtaddrs for x in prev[addr]):
-                    vi.fns.add(addr)
-        else:
-            if pos:
-                vi.fps.add(addr)
+                res = 'tn'
+            if addr in self.candidates.twos:
+                cat = 'twos'
+            elif addr in self.candidates.fours:
+                cat = 'fours'
+            elif addr in allixps:
+                cat = 'ixp'
             else:
-                vi.tns.add(addr)
-    return vi
+                cat = 'invalid'
+            rows.append([addr, res, cat])
+        return pd.DataFrame(rows, columns=['addr', 'result', 'category'])
+
+    def compare(self, vpn: Set[str], default: Set[str], ixps: Set[str], tasn: int, **kwargs):
+        rows = [
+            self.val.validate(self.alladdrs, self.candidates, self.valid, vpn, default, ixps, self.prev, tasn).series(vtype='all', **kwargs),
+            self.val.validate(self.middleecho, self.candidates, self.valid, vpn, default, ixps, self.prev, tasn).series(vtype='middle', **kwargs)
+        ]
+        return pd.DataFrame(rows)
 
 
 class VRFInfo:
