@@ -2,6 +2,7 @@ from collections import defaultdict
 from multiprocessing.pool import Pool
 
 from traceutils.progress.bar import Progress
+from traceutils.scamper.hop import ICMPType
 from traceutils.scamper.warts import WartsReader
 from traceutils.utils.net import prefix_addrs
 
@@ -10,7 +11,7 @@ def read_responses(filename):
     responses = defaultdict(bool)
     with WartsReader(filename) as f:
         for ping in f:
-            resp = any(r.icmp_type == 0 for r in ping.responses)
+            resp = any(r.type == ICMPType.echo_reply for r in ping.responses)
             responses[ping.dst] |= resp
     return responses
 
@@ -31,19 +32,20 @@ class PingTest:
         self.responses = dict(self._responses)
             # for file in pb.iterator(self.files):
             #     self.read_responses(file)
-
-    def read_responses(self, filename):
-        responses = defaultdict(bool)
-        with WartsReader(filename) as f:
-            for ping in f:
-                resp = any(r.icmp_type == 0 for r in ping.responses)
-                responses[ping.dst] |= resp
-        return responses
+    # 
+    # def read_responses(self, filename):
+    #     responses = defaultdict(bool)
+    #     with WartsReader(filename) as f:
+    #         for ping in f:
+    #             resp = any(r.type == ICMPType.echo_reply for r in ping.responses)
+    #             responses[ping.dst] |= resp
+    #     return responses
 
     def test_candidates(self, candidates):
         valid = {}
         for a in candidates:
             w, x, y, z = prefix_addrs(a, 2)
+            b = y if x == a else y
             if self._responses[w] or self._responses[z]:
                 valid[a] = 1
                 continue
@@ -52,6 +54,9 @@ class PingTest:
                 continue
             if self._responses[a]:
                 valid[a] = 3
+                continue
+            if self._responses[b]:
+                valid[a] = 5
                 continue
             else:
                 valid[a] = 4

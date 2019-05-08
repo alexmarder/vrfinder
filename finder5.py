@@ -7,7 +7,6 @@ from argparse import ArgumentParser, FileType
 from collections import defaultdict, Counter
 from multiprocessing.pool import ThreadPool, Pool
 from random import sample
-from socket import AF_INET6, inet_pton, inet_ntop
 from typing import List
 
 from traceutils.file2.file2 import File2
@@ -15,9 +14,8 @@ from traceutils.progress.bar import Progress
 from traceutils.radix.ip2as import IP2AS, create_table
 from traceutils.scamper.hop import Hop, ICMPType
 from traceutils.scamper.warts import WartsReader
-from traceutils.utils.net import prefix_addrs, inet_fix
+from traceutils.utils.net import prefix_addrs
 
-from candidate_info import CandidateInfo
 
 _ip2as: IP2AS = None
 
@@ -37,19 +35,6 @@ def are_adjacent(b1, b2):
             return False
     i += 1
     return abs(b1[i] - b2[i]) == 1
-
-
-def same_prefix(x: str, y: str, prefixlen):
-    # quotient, remainder = divmod(prefixlen, 8)
-    # for i in range(quotient):
-    #     if b1[i] != b2[i]:
-    #         return False
-    # 
-    xprefix = inet_fix(AF_INET6, x.encode(), prefixlen)
-    # print(inet_ntop(AF_INET6, xprefix))
-    yprefix = inet_fix(AF_INET6, y.encode(), prefixlen)
-    # print(inet_ntop(AF_INET6, yprefix))
-    return xprefix == yprefix
 
 
 def valid_pair(b1, b2):
@@ -88,7 +73,7 @@ def candidates_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
         _ip2as = ip2as
     info = CandidateInfo()
     files = [wf.filename for wf in filenames]
-    pb = Progress(len(filenames), message='', callback=info.__repr__)
+    pb = Progress(len(filenames), message='Reading traceroutes', callback=info.__repr__)
     with Pool(poolsize) as pool:
         for wf, newinfo in pb.iterator(zip(filenames, pool.imap(candidates, files))):
             info.update(newinfo)
@@ -105,6 +90,32 @@ def candidates_sequential(filenames: List[WartsFile], ip2as=None):
     for wf in pb.iterator(filenames):
         candidates(wf.filename, info=info)
     return info
+
+
+class CandidateInfo:
+
+    def __init__(self):
+        self.twos = set()
+        self.fours = set()
+        self.ixps = set()
+        self.cycles = set()
+        self.nexthop = set()
+        self.multi = set()
+        self.echos = set()
+        self.last = set()
+
+    def __repr__(self):
+        return '2 {:,d} 4 {:,d} X {:,d} C {:,d} N {:,d} M {:,d} E {:,d} L {:,d}'.format(len(self.twos), len(self.fours), len(self.ixps), len(self.cycles), len(self.nexthop), len(self.multi), len(self.echos), len(self.last))
+
+    def update(self, info):
+        self.twos.update(info.twos)
+        self.fours.update(info.fours)
+        self.ixps.update(info.ixps)
+        self.cycles.update(info.cycles)
+        self.nexthop.update(info.nexthop)
+        self.multi.update(info.multi)
+        self.echos.update(info.echos)
+        self.last.update(info.last)
 
 
 def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
@@ -126,8 +137,6 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                     for i in range(len(packed) - 1):
                         b1 = packed[i]
                         b2 = packed[i+1]
-                        if b1 == b2:
-                            continue
                         x = trace.hops[i]
                         y = trace.hops[i+1]
                         xaddr = x.addr
@@ -143,10 +152,6 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                                             info.twos.add(xaddr)
                                         elif size == -4 or size == 4:
                                             info.fours.add(xaddr)
-                                    elif trace.family == AF_INET6:
-                                        info.sixtyfours.add(xaddr)
-                                elif trace.family == AF_INET6 and same_prefix(xaddr, yaddr, 64):
-                                    info.sixtyfours.add(xaddr)
                             elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
                                 if i > 0:
                                     wasn = _ip2as.asn_packed(packed[i-1])
@@ -154,18 +159,11 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                                     wasn = None
                                 info.ixps.add((wasn, xaddr, yaddr))
                         if x.probe_ttl == y.probe_ttl - 1:
-                            if y.type == ICMPType.echo_reply:
-                                info.nextecho.add(xaddr)
-                            else:
-                                info.nexthop.add(xaddr)
+                            info.nexthop.add(xaddr)
                         else:
-                            if y.type == ICMPType.echo_reply:
-                                info.multiecho.add(xaddr)
-                            else:
-                                info.multi.add(xaddr)
-                        info.tuples.add((xaddr, yaddr))
+                            info.multi.add(yaddr)
                     x = trace.hops[-1]
-                    if x.type == ICMPType.echo_reply:
+                    if x.icmp_type == ICMPType.echo_reply:
                         info.echos.add(x.addr)
                     else:
                         info.last.add(x.addr)
@@ -247,7 +245,8 @@ def main():
     directory = os.path.dirname(args.output)
     if directory:
         os.makedirs(directory, exist_ok=True)
-    info.dump(args.output, prune=True)
+    with open(args.output, 'wb') as f:
+        pickle.dump(info, f)
 
 
 if __name__ == '__main__':
