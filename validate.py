@@ -2,17 +2,38 @@ import re
 import sys
 from collections import namedtuple, Counter
 from os.path import basename
-from typing import Set, Dict
+from typing import Set, Dict, Tuple
 
 from traceutils.as2org.as2org import AS2Org
 from traceutils.ixps.ixps import PeeringDB
 from traceutils.radix.ip2as import IP2AS
 
+from alias import Alias
 from finder import CandidateInfo
 import pandas as pd
 
 
 Row = namedtuple('Row', ['tp', 'fp', 'fn', 'tn', 'ppv', 'recall', 'total'])
+
+
+def detect(addr, candidates, valid=None, trippairs=None, aliases=None, ixps=None):
+    pos = False
+    if addr in candidates.twos:
+        pos = True
+    elif addr in candidates.fours:
+        if valid is None or valid[addr] > 1:
+            pos = True
+        else:
+            pos = False
+    elif ixps is None or addr in ixps:
+        pos = True
+    if pos:
+        if trippairs is not None and addr in trippairs:
+            pairs = trippairs[addr]
+            if all(w in aliases.nid and y in aliases.nid and aliases.nid[w] == aliases.nid[y] for w, y in pairs):
+                # vi.aliases.add(addr)
+                pos = False
+    return pos
 
 
 class VerifyInfo:
@@ -24,6 +45,7 @@ class VerifyInfo:
         self.twos = set()
         self.fours = set()
         self.ixps = set()
+        self.aliases = set()
 
     @property
     def tp(self):
@@ -95,35 +117,36 @@ class Validate:
                     return True
         return False
 
-    def validate(self, alladdrs, candidates: CandidateInfo, valid, vpn, default, ixps, prev, tasn) -> VerifyInfo:
+    def validate(self, alladdrs, candidates: CandidateInfo, vpn, default, ixps, prev, tasn, valid=None, trippairs=None, aliases: Alias=None) -> VerifyInfo:
         # print('hello')
         vi = VerifyInfo()
         torg = self.as2org[tasn]
         gtaddrs = vpn | default
         addrs = gtaddrs & alladdrs
         for addr in addrs:
-            pos = False
-            # if addr == '2001:468:f000:2707::1':
-            #     print('here')
-            if addr in candidates.twos:
-                pos = True
-            elif addr in candidates.fours:
-                if valid[addr] > 1:
-                    pos = True
-                else:
-                    pos = False
-                # if addr == '2001:468:f000:2707::1':
-                #     print(pos)
-            elif addr in ixps:
-                pos = True
+            pos = detect(addr, candidates, valid=valid, trippairs=trippairs, aliases=aliases, ixps=ixps)
+            # pos = False
+            # if addr in candidates.twos:
+            #     pos = True
+            # elif addr in candidates.fours:
+            #     if valid is None or valid[addr] > 1:
+            #         pos = True
+            #     else:
+            #         pos = False
+            # elif addr in ixps:
+            #     pos = True
+            # if pos:
+            #     if trippairs is not None and addr in trippairs:
+            #         pairs = trippairs[addr]
+            #         if all(w in aliases.nid and y in aliases.nid and aliases.nid[w] == aliases.nid[y] for w, y in pairs):
+            #             vi.aliases.add(addr)
+            #             pos = False
             if not self.use_addr(addr, torg, prev, gtaddrs):
                 continue
             if addr in vpn or addr in ['163.253.70.1']:
                 if pos:
                     vi.tps.add(addr)
                 elif addr != '198.71.47.83':
-                    # if prev[addr] & vpn:
-                    # if any(x in gtaddrs for x in prev[addr]):
                     vi.fns.add(addr)
             else:
                 if pos:
@@ -135,18 +158,41 @@ class Validate:
 
 class ValidateIPs:
 
-    def __init__(self, validate, candidates: CandidateInfo, valid: Dict[str, bool], prev: Dict[str, Set[str]]):
+    def __init__(self, validate, candidates: CandidateInfo, prev: Dict[str, Set[str]], valid: Dict[str, bool] = None, trippairs=None, aliases: Alias = None, alladdrs=None):
         self.val = validate
         self.candidates = candidates
         self.valid = valid
         self.prev = prev
-        self.alladdrs = candidates.alladdrs()
-        self.middle = candidates.middle()
-        self.middleecho = candidates.middle_echo()
+        self.trippairs = trippairs
+        self.aliases = aliases
+        if alladdrs is not None:
+            self.alladdrs = alladdrs
+        else:
+            self.alladdrs = candidates.alladdrs()
+        self._middle = None
+        self._middleecho = None
+
+    @property
+    def middle(self):
+        if self._middle is None:
+            self._middle = self.candidates.middle()
+        return self._middle
+
+    @property
+    def middleecho(self):
+        if self._middleecho is None:
+            self._middleecho = self.candidates.middle_echo()
+        return self._middleecho
+
+    def validate(self, addrs, vpn, default, ixps, tasn):
+        return self.val.validate(addrs, self.candidates, vpn, default, ixps, self.prev, tasn, valid=self.valid, trippairs=self.trippairs, aliases=self.aliases)
+
+    def allval(self, vpn, default, ixps, tasn):
+        return self.validate(self.alladdrs, vpn, default, ixps, tasn)
 
     def breakdown(self, vpn, default, ixps, tasn):
         allixps = self.candidates.ixpaddrs()
-        val: VerifyInfo = self.val.validate(self.alladdrs, self.candidates, self.valid, vpn, default, ixps, self.prev, tasn)
+        val: VerifyInfo = self.validate(self.alladdrs, vpn, default, ixps, tasn)
         rows = []
         for addr in val.tps | val.fps | val.fns | val.tns:
             if addr in val.tps:
@@ -170,28 +216,37 @@ class ValidateIPs:
 
     def compare(self, vpn: Set[str], default: Set[str], ixps: Set[str], tasn: int, **kwargs):
         rows = [
-            self.val.validate(self.alladdrs, self.candidates, self.valid, vpn, default, ixps, self.prev, tasn).series(vtype='all', **kwargs),
-            self.val.validate(self.middleecho, self.candidates, self.valid, vpn, default, ixps, self.prev, tasn).series(vtype='middle', **kwargs)
+            self.validate(self.alladdrs, vpn, default, ixps, tasn).series(vtype='all', **kwargs),
+            self.validate(self.middleecho, vpn, default, ixps, tasn).series(vtype='middle', **kwargs)
         ]
         return pd.DataFrame(rows)
 
+    def vrfinfo(self, ixps=None):
+        return VRFInfo(self.candidates, self.valid, ixps, self.trippairs, self.aliases)
+
 
 class VRFInfo:
-    def __init__(self, candidates: CandidateInfo):
+    def __init__(self, candidates: CandidateInfo, valid=None, ixps=None, trippairs=None, aliases=None):
         self.candidates = candidates
+        self.valid = valid
+        self.ixps = ixps
+        self.trippairs = trippairs
+        self.aliases = aliases
         self.middle = candidates.middle_echo()
         self.vrf = {}
 
-    def compute(self, valid, ixps):
+    def compute(self):
         self.vrf = {}
+        ixpaddrs = self.candidates.ixpaddrs()
         for a in self.middle:
-            if a in self.candidates.twos:
-                self.vrf[a] = 'two'
-            elif a in self.candidates.fours:
-                if valid[a] > 1:
+            pos = detect(a, self.candidates, self.valid, self.trippairs, self.aliases, self.ixps)
+            if pos:
+                if a in self.candidates.twos:
+                    self.vrf[a] = 'two'
+                elif a in self.candidates.fours:
                     self.vrf[a] = 'four'
-            elif a in ixps:
-                self.vrf[a] = 'ixp'
+                elif a in ixpaddrs:
+                    self.vrf[a] = 'ixp'
 
     @property
     def percent(self):

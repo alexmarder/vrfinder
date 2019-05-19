@@ -29,7 +29,9 @@ class PCH:
         with ThreadPool(poolsize) as pool:
             for subnets, ixid in pb.iterator(pool.imap_unordered(retrieve_subnet, self.ixids)):
                 for subnet in subnets:
-                    self.subnets[subnet] = ixid
+                    subnet = subnet.strip()
+                    if subnet:
+                        self.subnets[subnet] = ixid
 
     def retrieve_addrs(self, poolsize=5):
         pb = Progress(len(self.ixids), 'Retrieving subnets', callback=lambda: '{:,d}'.format(len(self.subnets)))

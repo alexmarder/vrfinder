@@ -21,10 +21,10 @@ class CandidateInfo:
         self.nextecho = set()
         self.multiecho = set()
         self.tuples = set()
-        self.sixtyfours = set()
+        self.triplets = set()
 
     def __repr__(self):
-        return '2 {:,d} 4 {:,d} 64 {:,d} X {:,d} C {:,d} N {:,d} M {:,d} E {:,d} L {:,d} NE {:,d} ME {:,d} T {:,d}'.format(len(self.twos), len(self.fours), len(self.sixtyfours), len(self.ixps), len(self.cycles), len(self.nexthop), len(self.multi), len(self.echos), len(self.last), len(self.nextecho), len(self.multiecho), len(self.tuples))
+        return '2 {:,d} 4 {:,d} X {:,d} C {:,d} N {:,d} M {:,d} E {:,d} L {:,d} NE {:,d} ME {:,d} T {:,d} 3 {:,d}'.format(len(self.twos), len(self.fours), len(self.ixps), len(self.cycles), len(self.nexthop), len(self.multi), len(self.echos), len(self.last), len(self.nextecho), len(self.multiecho), len(self.tuples), len(self.triplets))
 
     def alladdrs(self):
         return self.middle_echo() | self.echos | self.last
@@ -72,7 +72,8 @@ class CandidateInfo:
             d = d.__dict__
         # print(d.keys())
         for k, v in d.items():
-            info.__getattribute__(k).update(v)
+            if hasattr(info, k):
+                info.__getattribute__(k).update(v)
         return info
 
     def middle(self):
@@ -97,6 +98,15 @@ class CandidateInfo:
         for x, y in pb.iterator(self.tuples):
             prev[y].add(x)
         return dict(prev)
+
+    def trippairs(self):
+        pairs = defaultdict(list)
+        for w, x, y in self.triplets:
+            pairs[x].append((w, y))
+        return dict(pairs)
+
+    def tripaddrs(self):
+        return {a for trip in self.triplets for a in trip}
 
     def prune(self):
         self.nextecho -= self.nexthop
@@ -146,4 +156,23 @@ class CandidateInfo:
         self.nextecho.update(info.nextecho)
         self.multiecho.update(info.multiecho)
         self.tuples.update(info.tuples)
-        self.sixtyfours.update(info.sixtyfours)
+        self.triplets.update(info.triplets)
+
+
+class LastInfo:
+
+    def __init__(self, filename, candidates: CandidateInfo):
+        self.filename = filename
+        self.candidates = candidates
+        with open(filename, 'rb') as f:
+            d = pickle.load(f)
+        self.newtwos = d['twos']
+        self.newfours = d['fours']
+        self.twos = candidates.twos | self.newtwos
+        self.fours = candidates.fours | self.newfours
+
+    def __getattr__(self, name):
+        return getattr(self.candidates, name)
+
+    def __repr__(self):
+        return 'Twos {:,d} Fours {:,d}'.format(len(self.twos), len(self.fours))
