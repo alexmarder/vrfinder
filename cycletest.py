@@ -4,19 +4,47 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from multiprocessing.pool import Pool
 from os.path import basename
-from typing import List
+from typing import List, Dict
 
 from traceutils.file2.file2 import File2
 from traceutils.progress.bar import Progress
 from traceutils.scamper.hop import ICMPType
 from traceutils.scamper.warts import WartsReader
+from traceutils.utils.net import otherside
 
-from candidate_info import CandidateInfo
 from finder import are_adjacent, valid_pair
 
 
+class CycleInfo:
+
+    def __init__(self):
+        self.fours = {}
+        self.twos = {}
+
+    def __repr__(self):
+        return 'Twos {:,d} Fours {:,d}'.format(len(self.twos), len(self.fours))
+
+    def badfour(self):
+        return {a for a, b in self.fours.items() if not b}
+
+    def update(self, info):
+        update(self.fours, info.fours)
+        update(self.twos, info.twos)
+
+
+def update(old: Dict[str, bool], new: Dict[str, bool]):
+    for addr, b in new.items():
+        if not addr in old:
+            old[addr] = b
+        else:
+            borig = old[addr]
+            if b != borig:
+                if not borig:
+                    old[addr] = b
+
+
 def candidates_parallel(files: List[str], poolsize=35):
-    info = CandidateInfo()
+    info = CycleInfo()
     pb = Progress(len(files), message='', callback=info.__repr__)
     with Pool(poolsize) as pool:
         for newinfo in pb.iterator(pool.imap(candidates, files)):
@@ -25,25 +53,38 @@ def candidates_parallel(files: List[str], poolsize=35):
 
 
 def candidates(filename):
-    info = CandidateInfo()
+    info = CycleInfo()
     with WartsReader(filename) as f:
         for trace in f:
-            if trace.stop_reason == 'COMPLETED':
-                if len(trace.hops) >= 2:
-                    x = trace.hops[-2]
+            dst = trace.dst
+            dtwo = otherside(dst, 2)
+            try:
+                dfour = otherside(dst, 4)
+            except:
+                dfour = None
+            # if trace.stop_reason == 'UNREACH':
+            #     info.twos[dtwo] = False
+            #     if dfour:
+            #         info.fours[dfour] = False
+            if trace.hops:
+                if trace.stop_reason == 'COMPLETED':
+                    if len(trace.hops) >= 2:
+                        x = trace.hops[-2]
+                        y = trace.hops[-1]
+                        xaddr = x.addr
+                        yaddr = y.addr
+                        if yaddr == dst:
+                            if xaddr == dfour:
+                                info.fours[xaddr] = True
+                            elif xaddr == dtwo:
+                                info.twos[xaddr] = True
+                else:
                     y = trace.hops[-1]
-                    xb = x.set_packed()
-                    yb = y.set_packed()
-                    xaddr = x.addr
                     yaddr = y.addr
-                    if are_adjacent(xb, yb):
-                        size = valid_pair(xb, yb)
-                        if size != 0:
-                            if size == -2 or size == 2:
-                                info.twos.add(xaddr)
-                            elif size == -4 or size == 4:
-                                info.fours.add(xaddr)
-                            info.tuples.add((xaddr, yaddr))
+                    if yaddr == dfour:
+                        info.fours[yaddr] = False
+                    elif yaddr == dtwo:
+                        info.twos[yaddr] = False
     return info
 
 

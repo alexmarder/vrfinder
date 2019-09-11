@@ -21,7 +21,7 @@ def detect(addr, candidates, valid=None, trippairs=None, aliases=None, ixps=None
     if addr in candidates.twos:
         pos = True
     elif addr in candidates.fours:
-        if valid is None or valid[addr] > 1:
+        if valid is None or addr not in valid or valid[addr] > 1:
             pos = True
         else:
             pos = False
@@ -233,12 +233,13 @@ class VRFInfo:
         self.trippairs = trippairs
         self.aliases = aliases
         self.middle = candidates.middle_echo()
+        # self.middle = candidates.middle()
         self.vrf = {}
 
     def compute(self):
         self.vrf = {}
         ixpaddrs = self.candidates.ixpaddrs()
-        for a in self.middle:
+        for a in self.candidates.fours | self.candidates.twos | ixpaddrs:
             pos = detect(a, self.candidates, self.valid, self.trippairs, self.aliases, self.ixps)
             if pos:
                 if a in self.candidates.twos:
@@ -247,6 +248,27 @@ class VRFInfo:
                     self.vrf[a] = 'four'
                 elif a in ixpaddrs:
                     self.vrf[a] = 'ixp'
+                # else:
+                #     print(a)
+            # else:
+            #     print(a)
+
+    # def compute(self):
+    #     self.vrf = {}
+    #     ixpaddrs = self.candidates.ixpaddrs()
+    #     for a in self.middle:
+    #         pos = detect(a, self.candidates, self.valid, self.trippairs, self.aliases, self.ixps)
+    #         if pos:
+    #             if a in self.candidates.twos:
+    #                 self.vrf[a] = 'two'
+    #             elif a in self.candidates.fours:
+    #                 self.vrf[a] = 'four'
+    #             elif a in ixpaddrs:
+    #                 self.vrf[a] = 'ixp'
+    #             else:
+    #                 print(a)
+    #         # else:
+    #         #     print(a)
 
     @property
     def percent(self):

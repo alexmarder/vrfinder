@@ -39,6 +39,32 @@ def are_adjacent(b1, b2):
     return abs(b1[i] - b2[i]) == 1
 
 
+def command(infile, outfile, ctype, bz2=False, batch=True, nowait=True, vps=None):
+    scamper = '/usr/local/ark/pkg/scamper-cvs-20181025/bin/scamper'
+    if ctype == 'ping':
+        scom = 'ping -c 2 -o 1'
+    elif ctype == 'trace':
+        scom = 'trace -w 1 -P icmp-paris'
+    else:
+        raise Exception('Invalid command type: {}'.format(ctype))
+    directory = '/usr/local/ark/activity/vrfinder/'
+    infile = '{}{}'.format(directory, infile)
+    outfile = '{}{}'.format(directory, outfile)
+    out = '-' if bz2 else outfile
+    com = "shmux -c '{} -o {} -O warts -p 100 -c \"{}\" -f {}".format(scamper, out, scom, infile)
+    com += ' {}> /dev/null'.format(2 if bz2 else '&')
+    if bz2:
+        com += ' | bzip2 > {}'.format(outfile)
+    if nowait:
+        com += ' &'
+    com += "'"
+    if batch:
+        com += ' -B'
+    if vps:
+        com += ' {}'.format(' '.join(vps))
+    return com
+
+
 def same_prefix(x: str, y: str, prefixlen):
     # quotient, remainder = divmod(prefixlen, 8)
     # for i in range(quotient):
@@ -95,18 +121,6 @@ def candidates_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
     return info
 
 
-def candidates_sequential(filenames: List[WartsFile], ip2as=None):
-    wf: WartsFile
-    global _ip2as
-    if ip2as is not None:
-        _ip2as = ip2as
-    info = CandidateInfo()
-    pb = Progress(len(filenames), message='Reading traceroutes', callback=lambda: 'Twos {:,d} Fours {:,d}'.format(len(twos), len(fours)))
-    for wf in pb.iterator(filenames):
-        candidates(wf.filename, info=info)
-    return info
-
-
 def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
     global _ip2as
     if ip2as is not None:
@@ -135,21 +149,51 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                         if i > 0:
                             w = trace.hops[i-1]
                             waddr = w.addr
+                            if waddr == xaddr:
+                                for j in range(i-2, -2, -1):
+                                    if j < 0:
+                                        w = None
+                                        waddr = None
+                                        break
+                                    w = trace.hops[j]
+                                    waddr = w.addr
+                                    if waddr != xaddr:
+                                        break
                         else:
+                            w = None
                             waddr = None
                         xasn = _ip2as.asn_packed(b1)
                         # if y.icmp_type != 0:
                         if x.probe_ttl == y.probe_ttl - 1:
+                            # if not w or w.reply_ttl != y.reply_ttl:
                             if xasn >= 0:
                                 if are_adjacent(b1, b2):
                                     size = valid_pair(b1, b2)
                                     if size != 0:
                                         if size == -2 or size == 2:
                                             info.twos.add(xaddr)
+                                            info.rttls.add((xaddr, yaddr, x.reply_ttl, y.reply_ttl))
                                             info.triplets.add((waddr, xaddr, yaddr))
+                                            if y.type == ICMPType.echo_reply:
+                                                info.echotwos.add(xaddr)
+                                            if y.type == ICMPType.dest_unreach:
+                                                info.unreach.add(xaddr)
+                                            elif y.type == ICMPType.spoofing:
+                                                info.spoofing.add(xaddr)
+                                            else:
+                                                info.nounreach.add(xaddr)
                                         elif size == -4 or size == 4:
                                             info.fours.add(xaddr)
+                                            info.rttls.add((xaddr, yaddr, x.reply_ttl, y.reply_ttl))
                                             info.triplets.add((waddr, xaddr, yaddr))
+                                            if y.type == ICMPType.echo_reply:
+                                                info.echofours.add(xaddr)
+                                            if y.type == ICMPType.dest_unreach:
+                                                info.unreach.add(xaddr)
+                                            elif y.type == ICMPType.spoofing:
+                                                info.spoofing.add(xaddr)
+                                            else:
+                                                info.nounreach.add(xaddr)
                             elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
                                 if i > 0:
                                     wasn = _ip2as.asn_packed(packed[i-1])
@@ -157,6 +201,10 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                                     wasn = None
                                 info.ixps.add((wasn, xaddr, yaddr))
                                 info.triplets.add((waddr, xaddr, yaddr))
+                                # if y.type == ICMPType.dest_unreach:
+                                #     info.unreach.add(xaddr)
+                                # else:
+                                #     info.nounreach.add(xaddr)
                         if x.probe_ttl == y.probe_ttl - 1:
                             if y.type == ICMPType.echo_reply:
                                 info.nextecho.add(xaddr)
@@ -167,7 +215,7 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                                 info.multiecho.add(xaddr)
                             else:
                                 info.multi.add(xaddr)
-                        info.tuples.add((xaddr, yaddr))
+                        # info.tuples.add((xaddr, yaddr))
                     x = trace.hops[-1]
                     if x.type == ICMPType.echo_reply:
                         info.echos.add(x.addr)
@@ -180,14 +228,30 @@ def search(filename, ip2as=None):
     global _ip2as
     if ip2as is not None:
         _ip2as = ip2as
-    xtest = '64.57.21.6'
-    ytest = '64.57.21.7'
+    xtest = '12.246.45.166'
+    ytest = 7018
     with WartsReader(filename) as f:
         for trace in f:
             if trace.hops:
                 addrs = trace.addrs()
-                if not (xtest in addrs and ytest in addrs):
-                    continue
+                # if xtest in addrs and ytest in addrs:
+                #     return trace
+                # continue
+                if xtest in addrs and _ip2as[trace.dst] == ytest:
+                    return trace
+                continue
+                # if not (xtest in addrs and ytest in addrs):
+                #     continue
+                # i = 0
+                # j = 0
+                # for k, h in enumerate(trace.hops):
+                #     if h.addr == xtest:
+                #         i = k
+                #     elif h.addr == ytest:
+                #         j = k
+                #     if i and j and i < j:
+                #         return trace
+                # return trace
                 trace.prune_private(_ip2as)
                 if trace.hops:
                     # trace.prune_dups()
@@ -199,7 +263,13 @@ def search(filename, ip2as=None):
                         xaddr = x.addr
                         yaddr = y.addr
                         if xaddr == xtest and yaddr == ytest:
-                            return trace
+                            if x.probe_ttl == y.probe_ttl - 1:
+                                if i > 0:
+                                    w = trace.hops[i - 1]
+                                else:
+                                    w = None
+                                if not w or w.reply_ttl != y.reply_ttl:
+                                    return trace
     return None
 
 
@@ -214,32 +284,6 @@ def search_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
             if trace is not None:
                 return wf, trace
     return None
-
-
-def mplstest(filename, ip2as):
-    bins = defaultdict(bool)
-    test = defaultdict(set)
-    with WartsReader(filename) as f:
-        for trace in f:
-            for i in range(len(trace.hops) - 2):
-                x = trace.hops[i]
-                if x.ismpls and ip2as[x.addr] in [11537, 11164]:
-                    y = trace.hops[i+1]
-                    z = trace.hops[i+2]
-                    if x.probe_ttl == y.probe_ttl - 1 == z.probe_ttl - 2:
-                        if x.addr == '162.252.70.144':
-                            for hop in trace.hops:
-                                print('{:02d}: {} {}'.format(hop.probe_ttl, hop.addr, hop.ismpls))
-                            print()
-                        test[x.addr].add((y.addr, z.addr))
-                        if ip2as[x.addr] <= -100 and ip2as[y.addr] <= -100:
-                            bins[x.addr] = True
-                        if ip2as[y.addr] <= -100 and ip2as[z.addr] <= -100:
-                            bins[x.addr] = True
-                        else:
-                            bins[x.addr] |= are_adjacent(x.set_packed(), y.set_packed())
-                            bins[x.addr] |= are_adjacent(y.set_packed(), z.set_packed())
-    return test, bins
 
 
 _addrs = None
