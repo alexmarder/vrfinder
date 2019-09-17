@@ -2,8 +2,6 @@ import os
 import pickle
 from collections import defaultdict
 from copy import copy, deepcopy
-from typing import Union, Set, Any, NewType, DefaultDict, Tuple, Dict
-import pandas as pd
 
 from traceutils.as2org.as2org import AS2Org
 from traceutils.file2.file2 import File2
@@ -14,47 +12,12 @@ from traceutils.utils.net import otherside as otherside_err, prefix_addrs
 from alias import Alias
 
 
-IXPManagerT = NewType('IXPManager', DefaultDict[str, Set[Tuple[int, str, str]]])
-
-
-class IXPManager(defaultdict):
-    def __init__(self, *args, **kwargs):
-        super().__init__(set, *args, **kwargs)
-
-    def copy(self):
-        return IXPManager({k: set(v) for k, v in self.items()})
-
-    @classmethod
-    def from_tuples(cls, tuples):
-        ixps = cls()
-        for asn, x, y in tuples:
-            if x != y:
-                ixps[x].add((asn, x, y))
-        ixps.default_factory = None
-        return ixps
-
-    def ixps(self):
-        for k, v in self.items():
-            if v:
-                yield k
-
-    def remove(self, asn, x, y):
-        if x in self:
-            tuples = self[x]
-            t = (asn, x, y)
-            if t in tuples:
-                tuples.discard(t)
-                if not tuples:
-                    del self[x]
-
-
 class CandidateInfo:
 
     def __init__(self):
         self.twos = set()
         self.fours = set()
-        self.ixps: Union[Set[Any], IXPManagerT] = set()
-        self.ixp_tuples = set()
+        self.ixps = set()
         self.cycles = set()
         self.nexthop = set()
         self.multi = set()
@@ -75,42 +38,25 @@ class CandidateInfo:
     @classmethod
     def duplicate(cls, info):
         newinfo = cls()
-        dps = ['twos', 'fours']
+        dps = ['twos', 'fours', 'ixps']
+        # for k in dps:
+        #     setattr(newinfo, k, deepcopy(getattr(info, k)))
         for k, v in vars(info).items():
-            if k == 'ixps':
-                newinfo.ixps = info.ixps.copy()
-            elif k in dps:
-                try:
-                    setattr(newinfo, k, deepcopy(getattr(info, k)))
-                except TypeError:
-                    print(k)
-                    raise
+            if k in dps:
+                setattr(newinfo, k, deepcopy(getattr(info, k)))
             else:
                 setattr(newinfo, k, getattr(info, k))
         return newinfo
 
     def __repr__(self):
-        return '2 {:,d} 4 {:,d} X {:,d}'.format(len(self.twos), len(self.fours), len(self.ixps))
-
-    def __str__(self):
         return '2 {:,d} 4 {:,d} X {:,d} C {:,d} N {:,d} M {:,d} E {:,d} L {:,d} NE {:,d} ME {:,d} 3 {:,d} U {:,d} NU {:,d} S {:,d} R {:,d} E2 {:,d} E4 {:,d}'.format(len(self.twos), len(self.fours), len(self.ixps), len(self.cycles), len(self.nexthop), len(self.multi), len(self.echos), len(self.last), len(self.nextecho), len(self.multiecho), len(self.triplets), len(self.unreach), len(self.nounreach), len(self.spoofing), len(self.rttls), len(self.echotwos), len(self.echofours))
-
-    def add_lasts(self, filename):
-        with open(filename, 'rb') as f:
-            d = pickle.load(f)
-        self.twos.update(d['twos'])
-        self.fours.update(d['fours'])
 
     def alladdrs(self):
         return self.middle_echo() | self.echos | self.last | self.cyaddrs()
 
     @property
     def cfas(self):
-        return self.twos | self.fours | set(self.ixps.ixps())
-
-    def create_ixps(self, tuples):
-        self.ixp_tuples = tuples
-        self.ixps = IXPManager.from_tuples(tuples)
+        return self.twos | self.fours | self.ixpaddrs()
 
     def cyaddrs(self):
         return {x for cycle in self.cycles for x in cycle}
@@ -125,6 +71,30 @@ class CandidateInfo:
     def fixfours(self):
         self.original_fours = self.fours
         self.fours = self.fours - self.twos
+
+    def ixpaddrs(self):
+        return {x for _, x, y in self.ixps if x != y}
+
+    def ixpprune(self, peeringdb: PeeringDB, as2org: AS2Org):
+        ixps = set()
+        pasns = self.ixpprev()
+        for x, asns in pasns.items():
+            if x in peeringdb.addrs:
+                asn = peeringdb.addrs[x]
+                org = as2org[asn]
+                orgs = {as2org[asn] for asn in asns if asn is not None}
+                if org in orgs:
+                    ixps.add(x)
+            else:
+                pass
+                # ixps.add(x)
+        return ixps
+
+    def ixpprev(self):
+        pasns = defaultdict(set)
+        for pasn, x, _ in self.ixps:
+            pasns[x].add(pasn)
+        return dict(pasns)
 
     def lastaddrs(self):
         return self.last - (self.middle_echo())
@@ -143,7 +113,6 @@ class CandidateInfo:
         for k, v in d.items():
             if k != 'original_fours' and hasattr(info, k):
                 info.__getattribute__(k).update(v)
-        info.create_ixps(info.ixps)
         return info
 
     def middle(self):
@@ -155,61 +124,9 @@ class CandidateInfo:
     def noecho(self):
         return self.middle_echo() | self.last
 
-    def status(self):
-        return repr(self)
-
-    # def row(self, index):
-    #     return pd.Series(dict(twos=len(self.twos), fours=len(self.fours), ixps=len(self.ixps)), name=index)
-    #     # return dict(twos=len(self.twos), fours=len(self.fours), ixps=len(self.ixps)
-
-    def prune_all(self, valid: Dict[str, int], peeringdb: PeeringDB, as2org: AS2Org, alias: Alias, verbose=False, percent=False):
-        rows = []
-        if verbose:
-            rows.append(self.row('Initial', percent=percent))
-        self.prune_spoofing()
-        if verbose:
-            rows.append(self.row('Spoofing', percent=percent))
-        self.fixfours()
-        if verbose:
-            rows.append(self.row('Fix Fours', percent=percent))
-        self.prune_ixps(peeringdb, as2org)
-        if verbose:
-            rows.append(self.row('IXPs', percent=percent))
-        self.prune_pingtest(valid)
-        if verbose:
-            rows.append(self.row('Ping Test', percent=percent))
-        self.prune_router_loops(alias)
-        if verbose:
-            rows.append(self.row('Router Loops', percent=percent))
-        if verbose:
-            return pd.DataFrame(rows)
-
-    def prune_ixps(self, peeringdb: PeeringDB, as2org: AS2Org):
-        prune = set()
-        for x, tuples in self.ixps.items():
-            if x in peeringdb.addrs:
-                asn = peeringdb.addrs[x]
-                org = as2org[asn]
-                orgs = {as2org[asn] for asn, _, _ in tuples if asn is not None}
-                if org not in orgs:
-                    prune.add(x)
-            else:
-                prune.add(x)
-        for x in prune:
-            del self.ixps[x]
-
-    def prune_pingtest(self, valid: Dict[str, int]):
-        prune = {addr for addr in self.fours if valid.get(addr, 2) <= 1}
-        self.fours -= prune
-
-    def prune_spoofing(self):
-        unreach_only = self.unreach_only()
-        self.fours -= unreach_only
-        self.twos -= unreach_only
-
     def prune_router_loops(self, alias: Alias):
         ixps = defaultdict(list)
-        for asn, x, y in self.ixp_tuples:
+        for asn, x, y in self.ixps:
             ixps[x, y].append((asn, x, y))
         for x, y, z in self.triplets:
             if x in alias.aliases(z):
@@ -220,7 +137,7 @@ class CandidateInfo:
                 elif y in self.ixps:
                     found = ixps[y, z]
                     for t in found:
-                        self.ixps.remove(*t)
+                        self.ixps.discard(t)
 
     def succ(self):
         succ = defaultdict(set)
@@ -274,22 +191,25 @@ class CandidateInfo:
                     cfas.add(x)
         return cfas
 
-    def row(self, name=None, percent=False):
-        # ixpset = set(self.ixps.ixps())
+    def remove_spoofing(self):
+        unreach_only = self.unreach_only()
+        self.fours -= unreach_only
+        self.twos -= unreach_only
+
+    def row(self, name=None):
+        middle = self.middle_echo()
         twos = len(self.twos)
         fours = len(self.fours)
-        ixps = len(self.ixps)
+        ixps = len(self.ixpaddrs())
         total = twos + fours + ixps
-        # cycle_candidates = self.cycle_candidates()
-        # cycle_cfas = len(cycle_candidates - allcandidates)
-        # cycles = len(self.cycles)
-        d = {'twos': twos, 'fours': fours, 'ixps': ixps, 'total': total}
-        if percent:
-            middle = self.middle_echo()
-            allcandidates = self.twos | self.fours | self.ixps.keys()
-            middlecand = allcandidates & middle
-            d['totalp'] = len(middlecand) / len(middle)
-        return pd.Series(d, name=name)
+        allcandidates = self.twos | self.fours | self.ixpaddrs()
+        cycle_candidates = self.cycle_candidates()
+        cycle_cfas = len(cycle_candidates - allcandidates)
+        cycles = len(self.cycles)
+        d = {'twos': twos, 'fours': fours, 'ixps': ixps, 'total': total, 'totalp': total / len(middle), 'cycles': cycle_cfas, 'cycle_frac': cycle_cfas / cycles}
+        if name is not None:
+            d['name'] = name
+        return d
 
     def ttl_dict(self):
         d = defaultdict(set)

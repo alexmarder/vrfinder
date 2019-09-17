@@ -44,21 +44,25 @@ class PingTest:
     def test_candidates(self, candidates):
         valid = {}
         for a in candidates:
-            if a not in self.responses:
+            # if a not in self.responses:
+            #     valid[a] = 6
+            #     continue
+            w, x, y, z = prefix_addrs(a, 2)
+            if w not in self.responses and x not in self.responses and y not in self.responses and z not in self.responses:
                 valid[a] = 6
                 continue
-            w, x, y, z = prefix_addrs(a, 2)
             b = y if x == a else y
-            if self.responses[w] or self.responses[z]:
+            # if self.responses[w] or self.responses[z]:
+            if self.responses.get(w, False) or self.responses.get(z, False):
                 valid[a] = 1
                 continue
-            if self.responses[x] and self.responses[y]:
+            if self.responses.get(x, False) and self.responses.get(y, False):
                 valid[a] = 2
                 continue
-            if self.responses[a]:
+            if self.responses.get(a, False):
                 valid[a] = 3
                 continue
-            if self.responses[b]:
+            if self.responses.get(b, False):
                 valid[a] = 5
                 continue
             else:

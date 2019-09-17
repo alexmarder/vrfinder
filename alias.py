@@ -31,4 +31,7 @@ class Alias:
         self.nid = dict(aliases)
 
     def aliases(self, addr):
-        return self.node[self.nid[addr]]
+        nid = self.nid.get(addr)
+        if nid is not None:
+            return self.node[self.nid[addr]]
+        return set()
