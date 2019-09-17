@@ -222,12 +222,19 @@ class CandidateInfo:
                     for t in found:
                         self.ixps.remove(*t)
 
-    def succ(self):
+    def succ(self, filename=None, tuples=None):
+        if tuples is None:
+            if filename is not None:
+                with open(filename, 'rb') as f:
+                    tuples = pickle.load(f)['tuples']
+            else:
+                tuples = self.tuples
         succ = defaultdict(set)
-        pb = Progress(len(self.tuples), '', increment=500000)
-        for x, y in pb.iterator(self.tuples):
+        pb = Progress(len(tuples), '', increment=500000)
+        for x, y in pb.iterator(tuples):
             succ[x].add(y)
-        return dict(succ)
+        succ.default_factory = None
+        return succ
 
     def pairs(self):
         pairs = {(x, otherside(x, 2)) for x in self.twos}
