@@ -1,103 +1,78 @@
 #!/usr/bin/env python
-import json
 import os
-import pickle
-import subprocess
-from argparse import ArgumentParser, FileType
-from collections import defaultdict, Counter
-from multiprocessing.pool import ThreadPool, Pool
+from argparse import ArgumentParser
+from dataclasses import dataclass
+from multiprocessing.pool import Pool
 from random import sample
-from socket import AF_INET6, inet_pton, inet_ntop
-from typing import List
+from socket import AF_INET6
+from typing import List, Union, Optional, NamedTuple
 
 from traceutils.file2.file2 import File2
 from traceutils.progress.bar import Progress
 from traceutils.radix.ip2as import IP2AS, create_table
 from traceutils.scamper.hop import Hop, ICMPType
 from traceutils.scamper.warts import WartsReader
-from traceutils.utils.net import prefix_addrs, inet_fix
+from traceutils.utils.net import inet_fix
 
 from candidate_info import CandidateInfo
 
-_ip2as: IP2AS = None
+_ip2as: Optional[IP2AS] = None
 
+class FakeHop:
+    addr = None
+    reply_ttl = None
 
-def arksyncf(vps):
-    return ','.join(sorted(vps))
-
-
-def shmuxf(vps):
-    return ' '.join(sorted(vps))
-
+def add_pair(info: CandidateInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Hop, end: bool):
+    if ptype == 2 or ptype == -2:
+        cfas = info.twos
+        echo_cfas = info.echotwos
+    elif ptype == 4 or ptype == -4:
+        cfas = info.fours
+        echo_cfas = info.echofours
+    else:
+        return
+    cfas.add(x.addr)
+    info.rttls.add((w.addr, x.addr, y.addr, w.reply_ttl, x.reply_ttl, y.reply_ttl))
+    info.triplets.add((w.addr, x.addr, y.addr))
+    if not end or y.type == ICMPType.echo_reply:
+        echo_cfas.add(x.addr)
+    if y.type == ICMPType.dest_unreach:
+        info.unreach.add(x.addr)
+    elif y.type == ICMPType.spoofing:
+        info.spoofing.add(x.addr)
+    else:
+        info.nounreach.add(x.addr)
 
 def are_adjacent(b1, b2):
-    i = 0
-    for i in range(len(b1) - 1):
-        if b1[i] != b2[i]:
-            return False
-    i += 1
-    return abs(b1[i] - b2[i]) == 1
-
-
-def command(infile, outfile, ctype, bz2=False, batch=True, nowait=True, vps=None):
-    scamper = '/usr/local/ark/pkg/scamper-cvs-20181025/bin/scamper'
-    if ctype == 'ping':
-        scom = 'ping -c 2 -o 1'
-    elif ctype == 'trace':
-        scom = 'trace -w 1 -P icmp-paris'
-    else:
-        raise Exception('Invalid command type: {}'.format(ctype))
-    directory = '/usr/local/ark/activity/vrfinder/'
-    infile = '{}{}'.format(directory, infile)
-    outfile = '{}{}'.format(directory, outfile)
-    out = '-' if bz2 else outfile
-    com = "shmux -c '{} -o {} -O warts -p 100 -c \"{}\" -f {}".format(scamper, out, scom, infile)
-    com += ' {}> /dev/null'.format(2 if bz2 else '&')
-    if bz2:
-        com += ' | bzip2 > {}'.format(outfile)
-    if nowait:
-        com += ' &'
-    com += "'"
-    if batch:
-        com += ' -B'
-    if vps:
-        com += ' {}'.format(' '.join(vps))
-    return com
-
+    return b1[:-1] == b2[:-1] and abs(b1[-1] - b2[-1]) == 1
 
 def same_prefix(x: str, y: str, prefixlen):
-    # quotient, remainder = divmod(prefixlen, 8)
-    # for i in range(quotient):
-    #     if b1[i] != b2[i]:
-    #         return False
-    # 
     xprefix = inet_fix(AF_INET6, x.encode(), prefixlen)
-    # print(inet_ntop(AF_INET6, xprefix))
     yprefix = inet_fix(AF_INET6, y.encode(), prefixlen)
-    # print(inet_ntop(AF_INET6, yprefix))
     return xprefix == yprefix
 
+def select_w(trace, i, xaddr):
+    w: Hop = trace.hops[i - 1]
+    if w.addr == xaddr:
+        for j in range(i - 2, -2, -1):
+            if j < 0:
+                return FakeHop()
+            w = trace.hops[j]
+            if w.addr != xaddr:
+                return w
+    return w
 
 def valid_pair(b1, b2):
     r1 = b1[-1] % 4
     r2 = b2[-1] % 4
     if r1 == 0:
-        if r2 == 1:
-            return 2
-        return 0
+        return 2 if r2 == 1 else 0
     elif r1 == 1:
-        if r2 == 0:
-            return -2
-        return 4
+        return -2 if r2 == 0 else 4
     elif r1 == 2:
-        if r2 == 1:
-            return -4
-        return 2
+        return -4 if r2 == 1 else 2
     else:
-        if r2 == 2:
-            return -2
-        return 0
-
+        return -2 if r2 == 2 else 0
 
 class WartsFile:
     def __init__(self, filename, monitor):
@@ -107,19 +82,17 @@ class WartsFile:
     def __repr__(self):
         return 'Warts<{}, {}>'.format(self.filename, self.monitor)
 
-
 def candidates_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
     global _ip2as
     if ip2as is not None:
         _ip2as = ip2as
     info = CandidateInfo()
     files = [wf.filename for wf in filenames]
-    pb = Progress(len(filenames), message='', callback=info.__repr__)
+    pb = Progress(len(filenames), message='', callback=info.__str__)
     with Pool(poolsize) as pool:
         for wf, newinfo in pb.iterator(zip(filenames, pool.imap(candidates, files))):
             info.update(newinfo)
     return info
-
 
 def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
     global _ip2as
@@ -132,7 +105,6 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
             if trace.hops:
                 trace.prune_private(_ip2as)
                 if trace.hops:
-                    # trace.prune_dups()
                     trace.prune_loops()
                     if trace.loop:
                         info.cycles.add(tuple(h.addr for h in trace.loop))
@@ -144,78 +116,26 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                             continue
                         x = trace.hops[i]
                         y = trace.hops[i+1]
-                        xaddr = x.addr
-                        yaddr = y.addr
-                        if i > 0:
-                            w = trace.hops[i-1]
-                            waddr = w.addr
-                            if waddr == xaddr:
-                                for j in range(i-2, -2, -1):
-                                    if j < 0:
-                                        w = None
-                                        waddr = None
-                                        break
-                                    w = trace.hops[j]
-                                    waddr = w.addr
-                                    if waddr != xaddr:
-                                        break
-                        else:
-                            w = None
-                            waddr = None
-                        xasn = _ip2as.asn_packed(b1)
-                        # if y.icmp_type != 0:
+                        w: Union[Hop, FakeHop] = select_w(trace, i, x.addr)
                         if x.probe_ttl == y.probe_ttl - 1:
-                            # if not w or w.reply_ttl != y.reply_ttl:
+                            xasn = _ip2as.asn_packed(b1)
                             if xasn >= 0:
                                 if are_adjacent(b1, b2):
                                     size = valid_pair(b1, b2)
-                                    if size != 0:
-                                        if size == -2 or size == 2:
-                                            info.twos.add(xaddr)
-                                            info.rttls.add((xaddr, yaddr, x.reply_ttl, y.reply_ttl))
-                                            info.triplets.add((waddr, xaddr, yaddr))
-                                            if y.type == ICMPType.echo_reply:
-                                                info.echotwos.add(xaddr)
-                                            if y.type == ICMPType.dest_unreach:
-                                                info.unreach.add(xaddr)
-                                            elif y.type == ICMPType.spoofing:
-                                                info.spoofing.add(xaddr)
-                                            else:
-                                                info.nounreach.add(xaddr)
-                                        elif size == -4 or size == 4:
-                                            info.fours.add(xaddr)
-                                            info.rttls.add((xaddr, yaddr, x.reply_ttl, y.reply_ttl))
-                                            info.triplets.add((waddr, xaddr, yaddr))
-                                            if y.type == ICMPType.echo_reply:
-                                                info.echofours.add(xaddr)
-                                            if y.type == ICMPType.dest_unreach:
-                                                info.unreach.add(xaddr)
-                                            elif y.type == ICMPType.spoofing:
-                                                info.spoofing.add(xaddr)
-                                            else:
-                                                info.nounreach.add(xaddr)
+                                    add_pair(info, size, w, x, y, i+2 == len(packed))
                             elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
-                                if i > 0:
-                                    wasn = _ip2as.asn_packed(packed[i-1])
-                                else:
-                                    wasn = None
-                                info.ixps.add((wasn, xaddr, yaddr))
-                                info.triplets.add((waddr, xaddr, yaddr))
-                                # if y.type == ICMPType.dest_unreach:
-                                #     info.unreach.add(xaddr)
-                                # else:
-                                #     info.nounreach.add(xaddr)
-                        if x.probe_ttl == y.probe_ttl - 1:
+                                wasn = _ip2as.asn_packed(packed[i-1]) if i > 0 else None
+                                info.ixps.add((wasn, x.addr, y.addr))
+                                info.triplets.add((w.addr, x.addr, y.addr))
                             if y.type == ICMPType.echo_reply:
-                                info.nextecho.add(xaddr)
+                                info.nextecho.add(x.addr)
                             else:
-                                info.nexthop.add(xaddr)
+                                info.nexthop.add(x.addr)
                         else:
                             if y.type == ICMPType.echo_reply:
-                                info.multiecho.add(xaddr)
+                                info.multiecho.add(x.addr)
                             else:
-                                info.multi.add(xaddr)
-                        # info.tuples.add((xaddr, yaddr))
+                                info.multi.add(x.addr)
                     x = trace.hops[-1]
                     if x.type == ICMPType.echo_reply:
                         info.echos.add(x.addr)
@@ -223,72 +143,8 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                         info.last.add(x.addr)
     return info
 
-
-def search(filename, ip2as=None):
-    global _ip2as
-    if ip2as is not None:
-        _ip2as = ip2as
-    xtest = '12.246.45.166'
-    ytest = 7018
-    with WartsReader(filename) as f:
-        for trace in f:
-            if trace.hops:
-                addrs = trace.addrs()
-                # if xtest in addrs and ytest in addrs:
-                #     return trace
-                # continue
-                if xtest in addrs and _ip2as[trace.dst] == ytest:
-                    return trace
-                continue
-                # if not (xtest in addrs and ytest in addrs):
-                #     continue
-                # i = 0
-                # j = 0
-                # for k, h in enumerate(trace.hops):
-                #     if h.addr == xtest:
-                #         i = k
-                #     elif h.addr == ytest:
-                #         j = k
-                #     if i and j and i < j:
-                #         return trace
-                # return trace
-                trace.prune_private(_ip2as)
-                if trace.hops:
-                    # trace.prune_dups()
-                    trace.prune_loops()
-                    packed = [hop.set_packed() for hop in trace.hops]
-                    for i in range(len(packed) - 1):
-                        x = trace.hops[i]
-                        y = trace.hops[i + 1]
-                        xaddr = x.addr
-                        yaddr = y.addr
-                        if xaddr == xtest and yaddr == ytest:
-                            if x.probe_ttl == y.probe_ttl - 1:
-                                if i > 0:
-                                    w = trace.hops[i - 1]
-                                else:
-                                    w = None
-                                if not w or w.reply_ttl != y.reply_ttl:
-                                    return trace
-    return None
-
-
-def search_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
-    global _ip2as
-    if ip2as is not None:
-        _ip2as = ip2as
-    files = [wf.filename for wf in filenames]
-    pb = Progress(len(filenames), message='Searching')
-    with Pool(poolsize) as pool:
-        for wf, trace in pb.iterator(zip(filenames, pool.imap(search, files))):
-            if trace is not None:
-                return wf, trace
-    return None
-
-
 _addrs = None
 _directory = None
-
 
 def write_addrs_vp(vp, directory=None, addrs=None):
     global _addrs, _directory
@@ -300,20 +156,14 @@ def write_addrs_vp(vp, directory=None, addrs=None):
     with open(os.path.join(directory, '{}.addrs'.format(vp)), 'w') as f:
         f.writelines('{}\n'.format(a) for a in shuffled)
 
-
-def write_addrs(addrs, directory, vps, poolsize=None):
+def write_addrs(addrs, directory, vps):
     global _addrs, _directory
     _addrs = addrs
     _directory = directory
     os.makedirs(directory, exist_ok=True)
-    # with Pool(poolsize) as pool:
-    #     pb = Progress(len(vps), 'Writing')
-    #     for _ in pb.iterator(pool.imap_unordered(write_addrs_vp, vps)):
-    #         pass
     pb = Progress(len(vps), 'Writing')
     for vp in pb.iterator(vps):
         write_addrs_vp(vp, directory, addrs)
-
 
 def main():
     parser = ArgumentParser()
@@ -336,7 +186,6 @@ def main():
     if directory:
         os.makedirs(directory, exist_ok=True)
     info.dump(args.output, prune=True)
-
 
 if __name__ == '__main__':
     main()

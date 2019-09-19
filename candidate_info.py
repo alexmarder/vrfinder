@@ -325,6 +325,8 @@ class CandidateInfo:
         self.nounreach.update(info.nounreach)
         self.spoofing.update(info.spoofing)
         self.rttls.update(info.rttls)
+        self.echofours.update(info.echofours)
+        self.echotwos.update(info.echotwos)
 
     def write_fours(self, filename):
         addrs = {a for four in self.fours for a in prefix_addrs(four, 2)}
