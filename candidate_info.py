@@ -115,6 +115,9 @@ class CandidateInfo:
     def cyaddrs(self):
         return {x for cycle in self.cycles for x in cycle}
 
+    def cyaddrs1(self):
+        return {cycle[0] for cycle in self.cycles}
+
     def dump(self, filename, prune=True):
         if prune:
             self.prune()
