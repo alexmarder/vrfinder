@@ -166,26 +166,29 @@ class CandidateInfo:
     #     # return dict(twos=len(self.twos), fours=len(self.fours), ixps=len(self.ixps)
 
     def prune_all(self, valid: Dict[str, int], peeringdb: PeeringDB, as2org: AS2Org, alias: Alias, verbose=False, percent=False):
+        middle = self.middle_echo() if percent else None
         rows = []
         if verbose:
-            rows.append(self.row('Initial', percent=percent))
+            rows.append(self.row('Initial', percent=percent, middle=middle))
         self.prune_spoofing()
         if verbose:
-            rows.append(self.row('Spoofing', percent=percent))
+            rows.append(self.row('Spoofing', percent=percent, middle=middle))
         self.fixfours()
         if verbose:
-            rows.append(self.row('Fix Fours', percent=percent))
+            rows.append(self.row('Fix Fours', percent=percent, middle=middle))
         self.prune_ixps(peeringdb, as2org)
         if verbose:
-            rows.append(self.row('IXPs', percent=percent))
+            rows.append(self.row('IXPs', percent=percent, middle=middle))
         self.prune_pingtest(valid)
         if verbose:
-            rows.append(self.row('Ping Test', percent=percent))
+            rows.append(self.row('Ping Test', percent=percent, middle=middle))
         self.prune_router_loops(alias)
         if verbose:
-            rows.append(self.row('Router Loops', percent=percent))
+            rows.append(self.row('Router Loops', percent=percent, middle=middle))
         if verbose:
-            return pd.DataFrame(rows)
+            df = pd.DataFrame(rows)
+            df['totalp'] = (df.totalp * 100).round(1)
+            return df
 
     def prune_ixps(self, peeringdb: PeeringDB, as2org: AS2Org):
         prune = set()
@@ -284,7 +287,7 @@ class CandidateInfo:
                     cfas.add(x)
         return cfas
 
-    def row(self, name=None, percent=False):
+    def row(self, name=None, percent=False, middle=None, decimal=1):
         # ixpset = set(self.ixps.ixps())
         twos = len(self.twos)
         fours = len(self.fours)
@@ -295,7 +298,8 @@ class CandidateInfo:
         # cycles = len(self.cycles)
         d = {'twos': twos, 'fours': fours, 'ixps': ixps, 'total': total}
         if percent:
-            middle = self.middle_echo()
+            if middle is None:
+                middle = self.middle_echo()
             allcandidates = self.twos | self.fours | self.ixps.keys()
             middlecand = allcandidates & middle
             d['totalp'] = len(middlecand) / len(middle)
