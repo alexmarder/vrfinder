@@ -7,11 +7,11 @@ from traceutils.progress.bar import Progress
 
 class Alias:
 
-    def __init__(self, filename, include: Set[str] = None):
+    def __init__(self, filename, include: Set[str] = None, increment=500000):
         self.filename = filename
         nodes = defaultdict(set)
         aliases = {}
-        pb = Progress(message='Reading aliases', increment=100000, callback=lambda: 'Found {:,d}'.format(len(nodes)))
+        pb = Progress(message='Reading aliases', increment=increment, callback=lambda: 'Found {:,d}'.format(len(nodes)))
         with File2(filename) as f:
             for line in pb.iterator(f):
                 line = line.strip()

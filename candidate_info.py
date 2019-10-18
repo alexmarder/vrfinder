@@ -165,7 +165,13 @@ class CandidateInfo:
     #     return pd.Series(dict(twos=len(self.twos), fours=len(self.fours), ixps=len(self.ixps)), name=index)
     #     # return dict(twos=len(self.twos), fours=len(self.fours), ixps=len(self.ixps)
 
-    def prune_all(self, valid: Dict[str, int], peeringdb: PeeringDB, as2org: AS2Org, alias: Alias, verbose=False, percent=False):
+    def prune_spoof_fix(self):
+        info = CandidateInfo.duplicate(self)
+        info.prune_spoofing()
+        info.fixfours()
+        return info
+
+    def prune_all(self, valid: Dict[str, int], peeringdb: PeeringDB=None, as2org: AS2Org=None, alias: Alias=None, verbose=False, percent=False):
         middle = self.middle_echo() if percent else None
         rows = []
         if verbose:
@@ -213,7 +219,11 @@ class CandidateInfo:
         self.fours -= unreach_only
         self.twos -= unreach_only
 
-    def prune_router_loops(self, alias: Alias):
+    def prune_router_loops(self, alias: Alias, duplicate=False):
+        if duplicate:
+            info = CandidateInfo.duplicate(self)
+            info.prune_router_loops(alias, duplicate=False)
+            return info
         ixps = defaultdict(list)
         for asn, x, y in self.ixp_tuples:
             ixps[x, y].append((asn, x, y))
