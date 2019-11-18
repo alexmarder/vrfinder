@@ -1,48 +1,44 @@
-from multiprocessing.pool import ThreadPool
+import os
 
-import requests
+from traceutils.file2.file2 import File2
 from traceutils.progress.bar import Progress
 from traceutils.radix.ip2as import IP2AS
 
-
-def retrieve_subnet(ixid):
-    subnets = []
-    r = requests.get('https://www.pch.net/api/ixp/subnets/{}'.format(ixid))
-    if r.ok:
-        for info in r.json():
-            if 'subnet' in info:
-                subnets.append(info['subnet'])
-    return subnets, ixid
-
-
 class PCH:
-    def __init__(self):
-        r = requests.get('https://www.pch.net/api/ixp/directory/active')
-        if not r.ok:
-            raise Exception('Should be ok')
-        self.directory = r.json()
-        self.ixids = {int(ix['id']) for ix in self.directory}
-        self.subnets = {}
+    def __init__(self, ip2as: IP2AS):
+        self.ip2as = ip2as
 
-    def retrieve_subnets(self, poolsize=5):
-        pb = Progress(len(self.ixids), 'Retrieving subnets', callback=lambda: '{:,d}'.format(len(self.subnets)))
-        with ThreadPool(poolsize) as pool:
-            for subnets, ixid in pb.iterator(pool.imap_unordered(retrieve_subnet, self.ixids)):
-                for subnet in subnets:
-                    subnet = subnet.strip()
-                    if subnet:
-                        self.subnets[subnet] = ixid
+    def read(self, file):
+        addrs = {}
+        with File2(file) as f:
+            for line in f:
+                if line.startswith('*'):
+                    try:
+                        _, net, addr, metric, weight, *path = line.split()
+                    except:
+                        continue
+                    path = path[:-1]
+                    if not path:
+                        continue
+                    if '/' not in net:
+                        continue
+                    try:
+                        asn = int(path[0])
+                        if asn != 42 and asn != 715:
+                            if self.ip2as[addr] <= -100:
+                                # addrs[addr] = (asn, os.path.basename(file))
+                                if addr not in addrs:
+                                    addrs[addr] = asn
+                    except:
+                        print(line)
+                        raise
+        return addrs
 
-    def retrieve_addrs(self, poolsize=5):
-        pb = Progress(len(self.ixids), 'Retrieving subnets', callback=lambda: '{:,d}'.format(len(self.subnets)))
-        with ThreadPool(poolsize) as pool:
-            for subnets, ixid in pb.iterator(pool.imap_unordered(retrieve_subnet, self.ixids)):
-                for subnet in subnets:
-                    self.subnets[subnet] = ixid
-
-    def create_trie(self):
-        ip2as = IP2AS()
-        for subnet, ixid in self.subnets.items():
-            # print(type(ixid))
-            ip2as.add(subnet, asn=ixid)
-        return ip2as
+    def read_files(self, files, addrs=None):
+        if addrs is None:
+            addrs = {}
+        pb = Progress(len(files), 'pch', increment=1, callback=lambda: '{:,d}'.format(len(addrs)))
+        for file in pb.iterator(files):
+            newaddrs = self.read(file)
+            addrs.update(newaddrs)
+        return addrs

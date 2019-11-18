@@ -190,7 +190,7 @@ class CandidateInfo:
         info.fixfours()
         return info
 
-    def prune_all(self, valid: Dict[str, int], ixpaddrs: Dict[str, int]=None, as2org: AS2Org=None, alias: Alias=None, verbose=False, percent=False):
+    def prune_all(self, valid: Dict[str, int], peeringdb: PeeringDB=None, as2org: AS2Org=None, alias: Alias=None, verbose=False, percent=False):
         middle = self.middle_echo() if percent else None
         rows = []
         if verbose:
@@ -201,7 +201,7 @@ class CandidateInfo:
         self.fixfours()
         if verbose:
             rows.append(self.row('Fix Fours', percent=percent, middle=middle))
-        self.prune_ixps(ixpaddrs, as2org)
+        self.prune_ixps(peeringdb, as2org)
         if verbose:
             rows.append(self.row('IXPs', percent=percent, middle=middle))
         self.prune_pingtest(valid)
@@ -216,16 +216,12 @@ class CandidateInfo:
                 df['totalp'] = df.totalp.round(1)
             return df
 
-    def prune_ixps(self, ixpaddrs: Dict[str, int], as2org: AS2Org):
+    def prune_ixps(self, peeringdb: PeeringDB, as2org: AS2Org):
         prune = set()
         for x, tuples in self.ixps.items():
-            if x in ixpaddrs:
-                asn = ixpaddrs[x]
-                try:
-                    org = as2org[asn]
-                except:
-                    print(asn, type(asn))
-                    raise
+            if x in peeringdb.addrs:
+                asn = peeringdb.addrs[x]
+                org = as2org[asn]
                 orgs = {as2org[asn] for asn, _, _ in tuples if asn is not None}
                 if org not in orgs:
                     prune.add(x)
