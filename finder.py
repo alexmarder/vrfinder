@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import os
 from argparse import ArgumentParser
+from collections import Counter
 from dataclasses import dataclass
 from multiprocessing.pool import Pool
 from random import sample
@@ -26,14 +27,14 @@ class FakeHop:
 
 def add_pair(info: CandidateInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Hop, end: bool, dst: str):
     if ptype == 2 or ptype == -2:
-        cfas = info.twos
+        cfas: Counter = info.twos
         echo_cfas = info.echotwos
     elif ptype == 4 or ptype == -4:
-        cfas = info.fours
+        cfas: Counter = info.fours
         echo_cfas = info.echofours
     else:
         return
-    cfas.add(x.addr)
+    cfas[x.addr] += 1
     info.rttls.add((w.addr, x.addr, y.addr, w.reply_ttl, x.reply_ttl, y.reply_ttl))
     info.triplets.add((w.addr, x.addr, y.addr))
     info.dst_asns.add((x.addr, _ip2as[dst]))
@@ -112,43 +113,46 @@ def candidates(filename: str, ip2as=None, info: CandidateInfo = None):
                 trace.prune_private(_ip2as)
                 if trace.hops:
                     trace.prune_loops()
-                    if trace.loop:
-                        info.cycles.add(tuple(h.addr for h in trace.loop))
-                    packed = [hop.set_packed() for hop in trace.hops]
-                    for i in range(len(packed) - (1 if not middle_only else 2)):
-                        b1 = packed[i]
-                        b2 = packed[i+1]
-                        if b1 == b2:
-                            continue
-                        x = trace.hops[i]
-                        y = trace.hops[i+1]
-                        w: Union[Hop, FakeHop] = select_w(trace, i, x.addr)
-                        if x.probe_ttl == y.probe_ttl - 1:
-                            xasn = _ip2as.asn_packed(b1)
-                            # if xasn > -100:
-                            if xasn >= 0:
-                                if are_adjacent(b1, b2):
-                                    size = valid_pair(b1, b2)
-                                    add_pair(info, size, w, x, y, i+2 == len(packed), trace.dst)
-                            elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
-                                wasn = _ip2as.asn_packed(packed[i-1]) if i > 0 else None
-                                info.ixps.add((wasn, x.addr, y.addr))
-                                info.triplets.add((w.addr, x.addr, y.addr))
-                            if y.type == ICMPType.echo_reply:
-                                info.nextecho.add(x.addr)
+                    if trace.hops:
+                        if trace.loop:
+                            info.cycles.add(tuple(h.addr for h in trace.loop))
+                            for x, y in zip(trace.loop, trace.loop[1:]):
+                                info.loops[x, y] += 1
+                        packed = [hop.set_packed() for hop in trace.hops]
+                        for i in range(len(packed) - (1 if not middle_only else 2)):
+                            b1 = packed[i]
+                            b2 = packed[i+1]
+                            if b1 == b2:
+                                continue
+                            x = trace.hops[i]
+                            y = trace.hops[i+1]
+                            w: Union[Hop, FakeHop] = select_w(trace, i, x.addr)
+                            if x.probe_ttl == y.probe_ttl - 1:
+                                xasn = _ip2as.asn_packed(b1)
+                                if xasn >= 0:
+                                    if are_adjacent(b1, b2):
+                                        size = valid_pair(b1, b2)
+                                        add_pair(info, size, w, x, y, i+2 == len(packed), trace.dst)
+                                elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
+                                    wasn = _ip2as.asn_packed(packed[i-1]) if i > 0 else None
+                                    info.ixps.add((wasn, x.addr, y.addr))
+                                    info.ixp_adjs[x.addr, y.addr] += 1
+                                    info.triplets.add((w.addr, x.addr, y.addr))
+                                if y.type == ICMPType.echo_reply:
+                                    info.nextecho.add(x.addr)
+                                else:
+                                    info.nexthop.add(x.addr)
                             else:
-                                info.nexthop.add(x.addr)
-                        else:
-                            if y.type == ICMPType.echo_reply:
-                                info.multiecho.add(x.addr)
+                                if y.type == ICMPType.echo_reply:
+                                    info.multiecho.add(x.addr)
+                                else:
+                                    info.multi.add(x.addr)
+                        if not middle_only:
+                            x = trace.hops[-1]
+                            if x.type == ICMPType.echo_reply:
+                                info.echos.add(x.addr)
                             else:
-                                info.multi.add(x.addr)
-                    if not middle_only:
-                        x = trace.hops[-1]
-                        if x.type == ICMPType.echo_reply:
-                            info.echos.add(x.addr)
-                        else:
-                            info.last.add(x.addr)
+                                info.last.add(x.addr)
     return info
 
 _addrs = None
@@ -180,8 +184,8 @@ def main():
     parser.add_argument('-o', '--output', required=True)
     parser.add_argument('-i', '--ip2as', required=True)
     parser.add_argument('-p', '--poolsize', type=int, default=40)
-    parser.add_argument('-m', '--middle-only', action='store_true')
-    parser.add_argument('-d', '--include-dsts')
+    parser.add_argument('-m', '--middle-only', action='store_true', help='For experiment purposes.')
+    parser.add_argument('-d', '--include-dsts', help='For debugging purposes.')
     args = parser.parse_args()
     middle_only = args.middle_only
     if args.include_dsts:

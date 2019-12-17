@@ -1,6 +1,6 @@
 import os
 import pickle
-from collections import defaultdict, Counter
+from collections import defaultdict
 from copy import copy, deepcopy
 from typing import Union, Set, Any, NewType, DefaultDict, Tuple, Dict
 import pandas as pd
@@ -51,10 +51,9 @@ class IXPManager(defaultdict):
 class CandidateInfo:
 
     def __init__(self):
-        self.twos: Counter = Counter()
-        self.fours: Counter = Counter()
+        self.twos = set()
+        self.fours = set()
         self.ixps: Union[Set[Any], IXPManagerT] = set()
-        self.ixp_adjs = Counter()
         self.ixp_tuples = set()
         self.cycles = set()
         self.nexthop = set()
@@ -65,16 +64,15 @@ class CandidateInfo:
         self.multiecho = set()
         self.tuples = set()
         self.triplets = set()
-        self.unreach: Set[str] = set()
-        self.nounreach: Set[str] = set()
-        self.spoofing: Set[str] = set()
+        self.unreach = set()
+        self.nounreach = set()
+        self.spoofing = set()
         self.original_fours = None
         self.rttls = set()
         self.echofours = set()
         self.echotwos = set()
         self.dsts = set()
         self.dst_asns = set()
-        self.loops = Counter()
 
     @classmethod
     def duplicate(cls, info):
@@ -110,7 +108,7 @@ class CandidateInfo:
 
     @property
     def cfas(self):
-        return self.twos.keys() | self.fours.keys() | set(self.ixps.ixps())
+        return self.twos | self.fours | set(self.ixps.ixps())
 
     def create_ixps(self, tuples):
         self.ixp_tuples = tuples
@@ -139,8 +137,7 @@ class CandidateInfo:
 
     def fixfours(self):
         self.original_fours = self.fours
-        self.fours = Counter({k: v for k, v in self.fours.items() if k not in self.twos})
-        # self.fours = self.fours - self.twos
+        self.fours = self.fours - self.twos
 
     def lastaddrs(self):
         return self.last - (self.middle_echo())
@@ -242,10 +239,9 @@ class CandidateInfo:
         self.fours -= prune
 
     def prune_spoofing(self):
-        unreach_only: Set[str] = self.unreach_only()
-        for k in unreach_only:
-            self.fours.pop(k, None)
-            self.twos.pop(k, None)
+        unreach_only = self.unreach_only()
+        self.fours -= unreach_only
+        self.twos -= unreach_only
 
     def prune_router_loops(self, alias: Alias, duplicate=False):
         if duplicate:
@@ -258,33 +254,13 @@ class CandidateInfo:
         for x, y, z in self.triplets:
             if x in alias.aliases(z):
                 if z == otherside(y, 4):
-                    self.fours.pop(y)
+                    self.fours.discard(y)
                 elif z == otherside(y, 2):
-                    self.twos.pop(y)
+                    self.twos.discard(y)
                 elif y in self.ixps:
                     found = ixps[y, z]
                     for t in found:
                         self.ixps.remove(*t)
-
-    def prune_loops(self, duplicate=False):
-        if duplicate:
-            info = CandidateInfo.duplicate(self)
-            info.prune_loops(duplicate=False)
-            return info
-        remove2 = set()
-        for x, n in self.twos.items():
-            y = otherside(x, 2)
-            if n <= self.loops[x, y]:
-                remove2.add(x)
-        print(len(remove2))
-        self.twos = Counter({k: v for k, v in self.twos.items() if k not in remove2})
-        remove4 = set()
-        for x, n in self.fours.items():
-            y = otherside(x, 4)
-            if n <= self.loops[x, y]:
-                remove4.add(x)
-        print(len(remove4))
-        self.fours = Counter({k: v for k, v in self.fours.items() if k not in remove4})
 
     def succ(self, filename=None, tuples=None):
         if tuples is None:
@@ -399,7 +375,6 @@ class CandidateInfo:
         self.echotwos.update(info.echotwos)
         self.dsts.update(info.dsts)
         self.dst_asns.update(info.dst_asns)
-        self.loops.update(info.loops)
 
     def write_fours(self, filename):
         addrs = {a for four in self.fours for a in prefix_addrs(four, 2)}

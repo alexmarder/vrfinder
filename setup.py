@@ -25,5 +25,5 @@ setup(
     ),
     zip_safe=False,
     package_data=package_data,
-    include_package_data=True, install_requires=['pandas']
+    include_package_data=True, install_requires=['pandas', 'traceutils']
 )
