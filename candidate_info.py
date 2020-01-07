@@ -69,7 +69,7 @@ class CandidateInfo:
         self.nounreach: Set[str] = set()
         self.spoofing: Set[str] = set()
         self.original_fours = None
-        self.rttls = set()
+        self.rttls = Counter()
         self.echofours = set()
         self.echotwos = set()
         self.dsts = set()
@@ -112,6 +112,12 @@ class CandidateInfo:
     def cfas(self):
         return self.twos.keys() | self.fours.keys() | set(self.ixps.ixps())
 
+    def links(self):
+        for a in self.twos:
+            yield a, otherside(a, 2)
+        for a in self.fours:
+            yield a, otherside(a, 4)
+
     def create_ixps(self, tuples):
         self.ixp_tuples = tuples
         self.ixps = IXPManager.from_tuples(tuples)
@@ -136,6 +142,11 @@ class CandidateInfo:
         d = self.__dict__
         with open(filename, 'wb') as f:
             pickle.dump(d, f)
+
+    def dumps(self, prune=True):
+        if prune:
+            self.prune()
+        return vars(self)
 
     def fixfours(self):
         self.original_fours = self.fours
@@ -187,17 +198,23 @@ class CandidateInfo:
     #     return pd.Series(dict(twos=len(self.twos), fours=len(self.fours), ixps=len(self.ixps)), name=index)
     #     # return dict(twos=len(self.twos), fours=len(self.fours), ixps=len(self.ixps)
 
-    def prune_spoof_fix(self):
-        info = CandidateInfo.duplicate(self)
-        info.prune_spoofing()
-        info.fixfours()
-        return info
+    def prune_spoof_fix(self, duplicate=False):
+        if duplicate:
+            info = CandidateInfo.duplicate(self)
+            info.prune_spoof_fix(duplicate=False)
+            return info
+        # self.prune_loops()
+        self.prune_spoofing()
+        self.fixfours()
 
-    def prune_all(self, valid: Dict[str, int], ixpaddrs: Dict[str, int]=None, as2org: AS2Org=None, alias: Alias=None, verbose=False, percent=False):
+    def prune_all(self, valid: Dict[str, int], ixpaddrs: Dict[str, int]=None, as2org: AS2Org=None, alias: Alias=None, tripsuccs=None, verbose=False, percent=False):
         middle = self.middle_echo() if percent else None
         rows = []
         if verbose:
             rows.append(self.row('Initial', percent=percent, middle=middle))
+        self.prune_loops(tripsuccs)
+        if verbose:
+            rows.append(self.row('Loops', percent=percent, middle=middle))
         self.prune_spoofing()
         if verbose:
             rows.append(self.row('Spoofing', percent=percent, middle=middle))
@@ -213,6 +230,9 @@ class CandidateInfo:
         self.prune_router_loops(alias)
         if verbose:
             rows.append(self.row('Router Loops', percent=percent, middle=middle))
+        # self.prune_rttls()
+        # if verbose:
+        #     rows.append(self.row('RTTLs', percent=percent, middle=middle))
         if verbose:
             df = pd.DataFrame(rows)
             if percent:
@@ -239,7 +259,9 @@ class CandidateInfo:
 
     def prune_pingtest(self, valid: Dict[str, int]):
         prune = {addr for addr in self.fours if valid.get(addr, 2) <= 1}
-        self.fours -= prune
+        for k in prune:
+            self.fours.pop(k)
+        # self.fours -= prune
 
     def prune_spoofing(self):
         unreach_only: Set[str] = self.unreach_only()
@@ -258,33 +280,69 @@ class CandidateInfo:
         for x, y, z in self.triplets:
             if x in alias.aliases(z):
                 if z == otherside(y, 4):
-                    self.fours.pop(y)
+                    self.fours.pop(y, None)
                 elif z == otherside(y, 2):
-                    self.twos.pop(y)
+                    self.twos.pop(y, None)
                 elif y in self.ixps:
                     found = ixps[y, z]
                     for t in found:
                         self.ixps.remove(*t)
 
-    def prune_loops(self, duplicate=False):
+    def prune_loops(self, tripsucc, duplicate=False):
         if duplicate:
             info = CandidateInfo.duplicate(self)
-            info.prune_loops(duplicate=False)
+            info.prune_loops(tripsucc, duplicate=False)
             return info
         remove2 = set()
         for x, n in self.twos.items():
             y = otherside(x, 2)
-            if n <= self.loops[x, y]:
+            if (x, y) not in tripsucc and n <= self.loops[x, y]:
                 remove2.add(x)
-        print(len(remove2))
+        # print(len(remove2))
         self.twos = Counter({k: v for k, v in self.twos.items() if k not in remove2})
         remove4 = set()
         for x, n in self.fours.items():
             y = otherside(x, 4)
-            if n <= self.loops[x, y]:
+            if (x, y) not in tripsucc and n <= self.loops[x, y]:
                 remove4.add(x)
-        print(len(remove4))
+        # print(len(remove4))
         self.fours = Counter({k: v for k, v in self.fours.items() if k not in remove4})
+
+    def prune_rttls(self, duplicate=False):
+        if duplicate:
+            info = CandidateInfo.duplicate(self)
+            info.prune_rttls(duplicate=False)
+            return info
+        rttls = defaultdict(Counter)
+        for (w, x, y, wr, xr, yr), n in self.rttls.items():
+            rttls[x, y][xr, yr] = n
+        rttls.default_factory = None
+        remove2 = set()
+        for x in self.twos:
+            y = otherside(x, 2)
+            if (x, y) not in rttls:
+                continue
+            if all(yr >= xr for xr, yr in rttls[x, y]) and sum(
+                n for (xr, yr), n in rttls[x, y].items() if yr - xr == 1) / sum(rttls[x, y].values()) >= .5:
+                remove2.add(x)
+        remove4 = set()
+        for x in self.fours:
+            y = otherside(x, 4)
+            if (x, y) not in rttls:
+                continue
+            if all(yr >= xr for xr, yr in rttls[x, y]) and sum(
+                n for (xr, yr), n in rttls[x, y].items() if yr - xr == 1) / sum(rttls[x, y].values()) >= .5:
+                remove4.add(x)
+        self.twos = Counter({k: v for k, v in self.twos.items() if k not in remove2})
+        self.fours = Counter({k: v for k, v in self.fours.items() if k not in remove4})
+
+    def create_rttls(self):
+        rttls = defaultdict(Counter)
+        for (w, x, y, wr, xr, yr), n in self.rttls.items():
+            axr = adjust_rttl(xr)
+            ayr = adjust_rttl(yr)
+            rttls[x, y][axr, ayr] += n
+        return dict(rttls)
 
     def succ(self, filename=None, tuples=None):
         if tuples is None:
@@ -362,8 +420,8 @@ class CandidateInfo:
             middlecand = allcandidates & middle
             d['totalp'] = 100 * len(middlecand) / len(middle)
             if extras:
-                d['twosp'] = 100 * len(self.twos & middle) / len(middle)
-                d['foursp'] = 100 * len(self.fours & middle) / len(middle)
+                d['twosp'] = 100 * len(self.twos.keys() & middle) / len(middle)
+                d['foursp'] = 100 * len(self.fours.keys() & middle) / len(middle)
                 d['cyp'] = 100 * len(self.cycle_candidates()) / len(middle)
                 d['middle'] = len(middle)
         return pd.Series(d, name=name)
@@ -468,3 +526,20 @@ def otherside(addr, n):
         return otherside_err(addr, n)
     except:
         return None
+
+def adjust_rttl(rttl):
+    if rttl > 128:
+        return 255 - rttl
+    if rttl > 65:
+        return 128 - rttl
+    return 65 - rttl
+
+class CandidateInfoContainer(defaultdict):
+    @classmethod
+    def default(cls):
+        return cls(CandidateInfo)
+
+    def dump(self, filename, prune=True):
+        d = {vp: info.dumps(prune=prune) for vp, info in self.items()}
+        with open(filename, 'wb') as f:
+            pickle.dump(d, f)
