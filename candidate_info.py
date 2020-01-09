@@ -212,9 +212,9 @@ class CandidateInfo:
         rows = []
         if verbose:
             rows.append(self.row('Initial', percent=percent, middle=middle))
-        self.prune_loops(tripsuccs)
-        if verbose:
-            rows.append(self.row('Loops', percent=percent, middle=middle))
+        # self.prune_loops(tripsuccs)
+        # if verbose:
+        #     rows.append(self.row('Loops', percent=percent, middle=middle))
         self.prune_spoofing()
         if verbose:
             rows.append(self.row('Spoofing', percent=percent, middle=middle))
