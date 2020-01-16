@@ -1,7 +1,9 @@
 import os
 from collections import defaultdict
+from copy import deepcopy
 
 from traceutils.progress import Progress
+from traceutils.radix.ip2as import IP2AS
 from traceutils.scamper.hop import ICMPType
 from traceutils.scamper.warts import WartsReader
 from traceutils.utils.net import otherside
@@ -18,6 +20,17 @@ class Results:
     def __repr__(self):
         return 'C {:,d} R {:,d} U {:,d}'.format(len(self.confirmed), len(self.reject), len(self.unknown))
 
+    @classmethod
+    def duplicate(cls, res):
+        newres = cls()
+        for k in vars(res):
+            try:
+                setattr(newres, k, deepcopy(getattr(res, k)))
+            except TypeError:
+                print(k)
+                raise
+        return newres
+
     def subtract(self):
         self.reject -= self.confirmed
         self.unknown -= self.confirmed
@@ -27,6 +40,35 @@ class CandResults(Results):
     def __init__(self):
         super().__init__()
         self.rejpaths = {}
+        self.unknown2 = set()
+
+    def __repr__(self):
+        return super().__repr__() + ' U2 {:,d}'.format(len(self.unknown2))
+
+    def fix_rejects(self, ip2as: IP2AS, info: CandidateInfo):
+        keep = set()
+        prev = info.tripprev()
+        for x, paths in self.rejpaths.items():
+            asns = {ip2as[addr] for addr in prev[x]}
+            for path in paths:
+                if set(path) & asns:
+                    keep.add(x)
+        self.unknown2 = self.reject - keep
+        self.reject = keep
+
+    def limit(self, info: CandidateInfo):
+        cfas = info.twosfours()
+        self.confirmed &= cfas
+        self.reject &= cfas
+        self.unknown &= cfas
+        self.unknown2 &= cfas
+
+    def fracs(self):
+        total = len(self.confirmed | self.reject | self.unknown | self.unknown2)
+        conf = len(self.confirmed) / total
+        rej = len(self.reject - self.confirmed) / total
+        unk = len((self.unknown | self.unknown2) - self.confirmed - self.reject) / total
+        return {'conf': conf, 'rej': rej, 'unk': unk, 'total': total}
 
 class TraceResult(Results):
     def __init__(self):

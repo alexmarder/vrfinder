@@ -7,13 +7,16 @@ from traceutils.scamper.warts import WartsReader
 
 from finder import WartsFile
 
+xtest = None
+ytest = None
+
 
 def search(filename, ip2as=None):
     global _ip2as
     if ip2as is not None:
         _ip2as = ip2as
-    xtest = '62.115.133.181'
-    ytest = '62.115.133.180'
+    # xtest = '12.226.90.10'
+    # ytest = '12.226.90.11'
     with WartsReader(filename) as f:
         for trace in f:
             if trace.hops:
@@ -57,8 +60,10 @@ def search(filename, ip2as=None):
     return None
 
 
-def search_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
-    global _ip2as
+def search_parallel(filenames: List[WartsFile], x, y, ip2as=None, poolsize=35):
+    global _ip2as, xtest, ytest
+    xtest = x
+    ytest = y
     if ip2as is not None:
         _ip2as = ip2as
     files = [wf.filename for wf in filenames]
@@ -72,4 +77,4 @@ def search_parallel(filenames: List[WartsFile], ip2as=None, poolsize=35):
 def printtrace(trace: Trace, ip2as=None):
     for hop in trace.allhops:
         asn = ip2as[hop.addr] if ip2as is not None else 0
-        print('{:02d}: {:15} {:10} {:2} {:2}'.format(hop.probe_ttl, hop.addr, asn, hop.icmp_type, hop.icmp_code))
+        print('{:02d}: {:15} {:10} {:2} {:2} {:3} {:5}'.format(hop.probe_ttl, hop.addr, asn, hop.icmp_type, hop.icmp_code, hop.reply_ttl, hop.reply_ipid))

@@ -10,8 +10,9 @@ from traceutils.file2.file2 import File2
 from traceutils.ixps.ixps import PeeringDB
 from traceutils.progress.bar import Progress
 from traceutils.utils.net import otherside as otherside_err, prefix_addrs
+from traceutils.alias import Alias
 
-from alias import Alias
+# from alias import Alias
 
 
 IXPManagerT = NewType('IXPManager', DefaultDict[str, Set[Tuple[int, str, str]]])
@@ -111,6 +112,9 @@ class CandidateInfo:
     @property
     def cfas(self):
         return self.twos.keys() | self.fours.keys() | set(self.ixps.ixps())
+
+    def twosfours(self):
+        return self.twos.keys() | self.fours.keys()
 
     def links(self):
         for a in self.twos:
@@ -278,7 +282,7 @@ class CandidateInfo:
         for asn, x, y in self.ixp_tuples:
             ixps[x, y].append((asn, x, y))
         for x, y, z in self.triplets:
-            if x in alias.aliases(z):
+            if alias.nids.get(x, -1) == alias.nids.get(z, -2):
                 if z == otherside(y, 4):
                     self.fours.pop(y, None)
                 elif z == otherside(y, 2):
@@ -287,6 +291,25 @@ class CandidateInfo:
                     found = ixps[y, z]
                     for t in found:
                         self.ixps.remove(*t)
+
+    # def prune_router_loops(self, alias: Alias, duplicate=False):
+    #     if duplicate:
+    #         info = CandidateInfo.duplicate(self)
+    #         info.prune_router_loops(alias, duplicate=False)
+    #         return info
+    #     ixps = defaultdict(list)
+    #     for asn, x, y in self.ixp_tuples:
+    #         ixps[x, y].append((asn, x, y))
+    #     for x, y, z in self.triplets:
+    #         if x in alias.aliases(z):
+    #             if z == otherside(y, 4):
+    #                 self.fours.pop(y, None)
+    #             elif z == otherside(y, 2):
+    #                 self.twos.pop(y, None)
+    #             elif y in self.ixps:
+    #                 found = ixps[y, z]
+    #                 for t in found:
+    #                     self.ixps.remove(*t)
 
     def prune_loops(self, tripsucc, duplicate=False):
         if duplicate:
@@ -341,7 +364,7 @@ class CandidateInfo:
         for (w, x, y, wr, xr, yr), n in self.rttls.items():
             axr = adjust_rttl(xr)
             ayr = adjust_rttl(yr)
-            rttls[x, y][axr, ayr] += n
+            rttls[x][axr, ayr] += n
         return dict(rttls)
 
     def succ(self, filename=None, tuples=None):
@@ -375,6 +398,12 @@ class CandidateInfo:
         for x, y in pb.iterator(tuples):
             prev[y].add(x)
         return dict(prev)
+
+    def tripprev(self):
+        prev = defaultdict(set)
+        for w, x, y in self.triplets:
+            prev[x].add(w)
+        return prev
 
     def trippairs(self):
         pairs = defaultdict(list)
