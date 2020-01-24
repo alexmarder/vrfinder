@@ -93,12 +93,6 @@ class FinderInfo:
             yield from create_pairs(self.lastfours, 4)
             yield from create_pairs(self.lasttwos, 2)
 
-    def tripprev(self):
-        prev = defaultdict(set)
-        for w, x, y in self.triplets:
-            prev[x].add(w)
-        return prev
-
     def update(self, info):
         for k, v in vars(info).items():
             getattr(self, k).update(v)
