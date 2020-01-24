@@ -11,8 +11,6 @@ from traceutils.utils.net import otherside as otherside_err
 class FinderInfo:
 
     def __init__(self):
-        self.twos = Counter()
-        self.fours = Counter()
         self.ixps = set()
         self.ixp_adjs = Counter()
         self.ixp_tuples = set()
@@ -34,10 +32,16 @@ class FinderInfo:
         self.loops = Counter()
 
     def __repr__(self):
-        return '2 {:,d} 4 {:,d} X {:,d}'.format(len(self.twos), len(self.fours), len(self.ixps))
+        return 'M2 {m2:,d} M4 {m4:,d} L2 {l2:,d} L4 {l4:,d} E2 {e2:,d} E4 {e4:,d} X {ixps:,d}'.format(
+            m2=len(self.middletwos), m4=len(self.middlefours), l2=len(self.lasttwos), l4=len(self.lastfours),
+            e2=len(self.echotwos), e4=len(self.echofours), ixps=len(self.ixps)
+        )
 
     def __str__(self):
-        return '2 {:,d} 4 {:,d} X {:,d} C {:,d} N {:,d} M {:,d} E {:,d} L {:,d} NE {:,d} ME {:,d} 3 {:,d} U {:,d} NU {:,d} S {:,d} R {:,d} E2 {:,d} E4 {:,d} D {:,d}'.format(len(self.twos), len(self.fours), len(self.ixps), len(self.cycles), len(self.nexthop), len(self.multi), len(self.echos), len(self.last), len(self.nextecho), len(self.multiecho), len(self.triplets), len(self.unreach), len(self.nounreach), len(self.spoofing), len(self.rttls), len(self.echotwos), len(self.echofours), len(self.dst_asns))
+        s = repr(self)
+        return '{repr} L {last:,d} C {loop:,d}'.format(
+            repr=s, middle=len(self.middle), last=len(self.last), loop=len(self.loops)
+        )
 
     def dump(self, filename):
         d = self.dumps()
@@ -64,7 +68,6 @@ class FinderInfo:
 
     @classmethod
     def load(cls, filename):
-        info = cls()
         with open(filename, 'rb') as f:
             d = pickle.load(f)
         return cls.loads(d)
@@ -79,6 +82,23 @@ class FinderInfo:
         # info.create_ixps(info.ixps)
         return info
 
+    def pairs(self, middle=True, echo=True, last=True):
+        if middle:
+            yield from create_pairs(self.middlefours, 4)
+            yield from create_pairs(self.middletwos, 2)
+        if echo:
+            yield from create_pairs(self.echofours, 4)
+            yield from create_pairs(self.echotwos, 2)
+        if last:
+            yield from create_pairs(self.lastfours, 4)
+            yield from create_pairs(self.lasttwos, 2)
+
+    def tripprev(self):
+        prev = defaultdict(set)
+        for w, x, y in self.triplets:
+            prev[x].add(w)
+        return prev
+
     def update(self, info):
         for k, v in vars(info).items():
             getattr(self, k).update(v)
@@ -88,10 +108,16 @@ class FinderInfoContainer(defaultdict):
     def default(cls):
         return cls(FinderInfo)
 
-    def dump(self, filename, prune=True):
-        d = {vp: info.dumps(prune=prune) for vp, info in self.items()}
+    def dump(self, filename):
+        d = {vp: info.dumps() for vp, info in self.items()}
         with open(filename, 'wb') as f:
             pickle.dump(d, f)
+    @staticmethod
+    def load(filename):
+        with open(filename, 'rb') as f:
+            infos = pickle.load(f)
+        infos = {k: FinderInfo.loads(v) for k, v in infos.items()}
+        return infos
 
 def write_addrs(filename, addrs):
     directory = os.path.dirname(filename)
@@ -113,3 +139,8 @@ def adjust_rttl(rttl):
     if rttl > 65:
         return 128 - rttl
     return 65 - rttl
+
+def create_pairs(cands, subnet):
+    for x in cands:
+        y = otherside(x, subnet)
+        yield x, y

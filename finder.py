@@ -27,23 +27,29 @@ class FakeHop:
 
 def add_pair(info: FinderInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Hop, end: bool, dst: str):
     if ptype == 2 or ptype == -2:
-        cfas: Counter = info.twos
         echo_cfas = info.echotwos
+        middle_cfas = info.middletwos
+        last_cfas = info.lasttwos
     elif ptype == 4 or ptype == -4:
-        cfas: Counter = info.fours
         echo_cfas = info.echofours
+        middle_cfas = info.middlefours
+        last_cfas = info.lastfours
     else:
         return
-    cfas[x.addr] += 1
+    if end:
+        if y.type == ICMPType.echo_reply:
+            echo_cfas[x.addr] += 1
+        else:
+            if y.type == ICMPType.spoofing:
+                info.spoofing.add(x.addr)
+            else:
+                info.nounreach.add(x.addr)
+            last_cfas[x.addr] += 1
+    else:
+        middle_cfas[x.addr] += 1
     info.rttls[w.addr, x.addr, y.addr, w.reply_ttl, x.reply_ttl, y.reply_ttl] += 1
     info.triplets.add((w.addr, x.addr, y.addr))
     info.dst_asns.add((x.addr, _ip2as[dst]))
-    if not end or y.type == ICMPType.echo_reply:
-        echo_cfas.add(x.addr)
-    elif y.type == ICMPType.spoofing:
-        info.spoofing.add(x.addr)
-    else:
-        info.nounreach.add(x.addr)
 
 def are_adjacent(b1, b2):
     return b1[:-1] == b2[:-1] and abs(b1[-1] - b2[-1]) == 1
@@ -206,6 +212,16 @@ def create_ixp_table(peeringdb: AbstractPeeringDB):
         table.add_asn(prefix, asn=(-100 - ixp_id))
     return table
 
+def read_files(file):
+    files = []
+    with File2(file) as f:
+        for line in f:
+            line = line.strip()
+            monitor = os.path.basename(line).partition('.')[0]
+            wf = WartsFile(line, monitor)
+            files.append(wf)
+    return files
+
 def main(argv=None):
     global middle_only, include_dsts
     parser = ArgumentParser()
@@ -223,13 +239,7 @@ def main(argv=None):
     if args.include_dsts:
         with File2(args.include_dsts) as f:
             include_dsts = {line.strip() for line in f}
-    files = []
-    with File2(args.filename) as f:
-        for line in f:
-            line = line.strip()
-            monitor = os.path.basename(line).partition('.')[0]
-            wf = WartsFile(line, monitor)
-            files.append(wf)
+    files = read_files(args.filename)
     print('Files: {:,d}'.format(len(files)))
     if args.peeringdb:
         peeringdb = create_peeringdb(args.peeringdb)
