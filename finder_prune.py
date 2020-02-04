@@ -1,7 +1,10 @@
+import os
 import pickle
 from collections import defaultdict
 from copy import deepcopy
 from typing import Set, Dict
+
+from traceutils.utils.net import otherside, prefix_addrs
 
 from finder_info import FinderInfo
 
@@ -51,6 +54,15 @@ class FinderPrune(FinderInfo):
     def middle_cfas(self):
         return self.middlefours + self.middletwos
 
+    def ping_output(self, file, skip=None):
+        toping = {a for addr in self.fours() for a in prefix_addrs(addr, 2)}
+        print('To ping: {:,d}'.format(len(toping)))
+        if skip:
+            toping -= skip
+            print('After removing skips: {:,d}'.format(len(toping)))
+        with open(file, 'w') as f:
+            f.writelines('{}\n'.format(addr) for addr in toping)
+
     def prune_pingtest(self, valid: Dict[str, int], duplicate=False):
         if duplicate:
             info = self.duplicate(self)
@@ -75,24 +87,54 @@ class FinderPrune(FinderInfo):
             self.lastfours.pop(k, None)
             self.lasttwos.pop(k, None)
 
+    def prune_spoof_fix(self, duplicate=False):
+        if duplicate:
+            info = FinderPrune.duplicate(self)
+            info.prune_spoof_fix(duplicate=False)
+            return info
+        self.prune_spoofing()
+        self.fixfours()
+
     def tripprev(self):
         prev = defaultdict(set)
         for w, x, y in self.triplets:
             prev[x].add(w)
         return prev
 
-class FinderPruneContainer(defaultdict):
+class FinderPruneContainer(dict):
     @classmethod
     def default(cls):
-        return cls(FinderPrune)
+        return cls()
+
+    def reduce(self):
+        info = FinderPrune()
+        for vpinfo in self.values():
+            info.update(vpinfo)
+        return info
 
     def dump(self, filename):
         d = {vp: info.dumps() for vp, info in self.items()}
         with open(filename, 'wb') as f:
             pickle.dump(d, f)
-    @staticmethod
-    def load(filename):
+
+    @classmethod
+    def load(cls, filename):
         with open(filename, 'rb') as f:
             infos = pickle.load(f)
-        infos = {k: FinderPrune.loads(v) for k, v in infos.items()}
-        return infos
+        container = cls()
+        for k, v in infos.items():
+            container[k] = FinderPrune.loads(v)
+        return container
+
+    def trace_output(self, directory, skips=None):
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        for vp, info in self.items():
+            skip = skips[vp] if skips is not None and vp in skips else None
+            targets = {otherside(addr, 2) for addr in info.middletwos.keys() | info.lasttwos.keys()}
+            targets |= {otherside(addr, 4) for addr in info.middlefours.keys() | info.lastfours.keys()}
+            if skip is not None:
+                targets -= skip
+            if targets:
+                with open(os.path.join(directory, '{}.addrs'.format(vp)), 'w') as f:
+                    f.writelines('{}\n'.format(target) for target in targets)
