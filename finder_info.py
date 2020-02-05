@@ -82,17 +82,6 @@ class FinderInfo:
         # info.create_ixps(info.ixps)
         return info
 
-    def pairs(self, middle=True, echo=True, last=True):
-        if middle:
-            yield from create_pairs(self.middlefours, 4)
-            yield from create_pairs(self.middletwos, 2)
-        if echo:
-            yield from create_pairs(self.echofours, 4)
-            yield from create_pairs(self.echotwos, 2)
-        if last:
-            yield from create_pairs(self.lastfours, 4)
-            yield from create_pairs(self.lasttwos, 2)
-
     def update(self, info):
         for k, v in vars(info).items():
             getattr(self, k).update(v)
@@ -133,8 +122,3 @@ def adjust_rttl(rttl):
     if rttl > 65:
         return 128 - rttl
     return 65 - rttl
-
-def create_pairs(cands, subnet):
-    for x in cands:
-        y = otherside(x, subnet)
-        yield x, y

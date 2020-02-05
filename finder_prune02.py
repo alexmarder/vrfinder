@@ -1,10 +1,9 @@
-import os
 import pickle
-from collections import defaultdict
+from collections import defaultdict, Counter
 from copy import deepcopy
 from typing import Set, Dict
 
-from traceutils.utils.net import otherside as otherside_err, prefix_addrs
+from traceutils.utils.net import otherside
 
 from finder_info import FinderInfo
 
@@ -54,12 +53,6 @@ class FinderPrune(FinderInfo):
     def middle_cfas(self):
         return self.middlefours + self.middletwos
 
-    def last_cfas(self):
-        return self.lastfours + self.lasttwos
-
-    def echo_cfas(self):
-        return self.echofours + self.echotwos
-
     def pairs(self, middle=True, echo=True, last=True, num=False):
         # pairs = Counter()
         if middle:
@@ -78,15 +71,6 @@ class FinderPrune(FinderInfo):
             yield from create_pairs(self.lastfours, 4, num=num)
             yield from create_pairs(self.lasttwos, 2, num=num)
 
-    def ping_output(self, file, skip=None):
-        toping = {a for addr in self.fours() for a in prefix_addrs(addr, 2)}
-        print('To ping: {:,d}'.format(len(toping)))
-        if skip:
-            toping -= skip
-            print('After removing skips: {:,d}'.format(len(toping)))
-        with open(file, 'w') as f:
-            f.writelines('{}\n'.format(addr) for addr in toping)
-
     def prune_pingtest(self, valid: Dict[str, int], duplicate=False):
         if duplicate:
             info = self.duplicate(self)
@@ -101,28 +85,6 @@ class FinderPrune(FinderInfo):
             if k in self.lastfours:
                 self.lastfours.pop(k)
 
-    def prune_router_loops(self, aliases, duplicate=False):
-        if duplicate:
-            info = self.duplicate(self)
-            info.prune_router_loops(aliases, duplicate=False)
-            return info
-        for x, y, z in self.triplets:
-            if aliases.nids.get(x, -1) == aliases.nids.get(y, -2):
-                if z == otherside(y, 4):
-                    if y in self.middlefours:
-                        self.middlefours.pop(y)
-                    if y in self.echofours:
-                        self.echofours.pop(y)
-                    if y in self.lastfours:
-                        self.lastfours.pop(y)
-                elif z == otherside(y, 2):
-                    if y in self.middletwos:
-                        self.middletwos.pop(y)
-                    if y in self.echotwos:
-                        self.echotwos.pop(y)
-                    if y in self.lasttwos:
-                        self.lasttwos.pop(y)
-
     def prune_spoofing(self, duplicate=False):
         if duplicate:
             info = self.duplicate(self)
@@ -133,60 +95,27 @@ class FinderPrune(FinderInfo):
             self.lastfours.pop(k, None)
             self.lasttwos.pop(k, None)
 
-    def prune_spoof_fix(self, duplicate=False):
-        if duplicate:
-            info = FinderPrune.duplicate(self)
-            info.prune_spoof_fix(duplicate=False)
-            return info
-        self.prune_spoofing()
-        self.fixfours()
-
-    def tripaddrs(self):
-        return {a for t in self.triplets for a in t}
-
     def tripprev(self):
         prev = defaultdict(set)
         for w, x, y in self.triplets:
             prev[x].add(w)
         return prev
 
-class FinderPruneContainer(dict):
+class FinderPruneContainer(defaultdict):
     @classmethod
     def default(cls):
-        return cls()
-
-    def reduce(self):
-        info = FinderPrune()
-        for vpinfo in self.values():
-            info.update(vpinfo)
-        return info
+        return cls(FinderPrune)
 
     def dump(self, filename):
         d = {vp: info.dumps() for vp, info in self.items()}
         with open(filename, 'wb') as f:
             pickle.dump(d, f)
-
-    @classmethod
-    def load(cls, filename):
+    @staticmethod
+    def load(filename):
         with open(filename, 'rb') as f:
             infos = pickle.load(f)
-        container = cls()
-        for k, v in infos.items():
-            container[k] = FinderPrune.loads(v)
-        return container
-
-    def trace_output(self, directory, skips=None):
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        for vp, info in self.items():
-            skip = skips[vp] if skips is not None and vp in skips else None
-            targets = {otherside(addr, 2) for addr in info.middletwos.keys() | info.lasttwos.keys()}
-            targets |= {otherside(addr, 4) for addr in info.middlefours.keys() | info.lastfours.keys()}
-            if skip is not None:
-                targets -= skip
-            if targets:
-                with open(os.path.join(directory, '{}.addrs'.format(vp)), 'w') as f:
-                    f.writelines('{}\n'.format(target) for target in targets)
+        infos = {k: FinderPrune.loads(v) for k, v in infos.items()}
+        return infos
 
 def create_pairs(cands, subnet, num=False):
     for x in cands:
@@ -195,9 +124,3 @@ def create_pairs(cands, subnet, num=False):
             yield x, y, cands[x]
         else:
             yield x, y
-
-def otherside(addr, n):
-    try:
-        return otherside_err(addr, n)
-    except:
-        return None

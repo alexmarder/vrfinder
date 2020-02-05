@@ -10,6 +10,11 @@ from finder import WartsFile
 xtest = None
 ytest = None
 
+def search_dst(filename, dst):
+    with WartsReader(filename) as f:
+        for trace in f:
+            if trace.dst == dst:
+                return trace
 
 def search(filename, ip2as=None):
     global _ip2as

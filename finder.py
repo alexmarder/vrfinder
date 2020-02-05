@@ -176,11 +176,36 @@ def lasttwo(filename, ip2as):
                             subnet = are_adjacent(x.set_packed(), y.set_packed())
                             if subnet:
                                 confirm.add(y.addr)
-                            else:
-                                asns = [ip2as[h.addr] for h in trace.hops]
-                                rejpaths.add((y.addr, tuple(asns)))
-                                reject.add(y.addr)
+                                continue
+                            # else:
+                asns = [ip2as[h.addr] for h in trace.hops]
+                rejpaths.add((y.addr, tuple(asns)))
+                reject.add(y.addr)
     return confirm, reject, total, rejpaths
+
+# def lasttwo(filename, ip2as):
+#     total = set()
+#     reject = set()
+#     confirm = set()
+#     rejpaths = set()
+#     with WartsReader(filename) as f:
+#         for trace in f:
+#             total.add(trace.dst)
+#             if trace.stop_reason == 'COMPLETED':
+#                 if len(trace.hops) >= 2:
+#                     x = trace.hops[-2]
+#                     y = trace.hops[-1]
+#                     if x.probe_ttl == y.probe_ttl - 1:
+#                         if y.type == ICMPType.echo_reply:
+#                             subnet = are_adjacent(x.set_packed(), y.set_packed())
+#                             if subnet:
+#                                 confirm.add(y.addr)
+#                                 continue
+#                             # else:
+#                 asns = [ip2as[h.addr] for h in trace.hops]
+#                 rejpaths.add((y.addr, tuple(asns)))
+#                 reject.add(y.addr)
+#     return confirm, reject, total, rejpaths
 
 _addrs = None
 _directory = None
