@@ -49,7 +49,7 @@ def add_pair(info: FinderInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Ho
         middle_cfas[x.addr] += 1
     info.rttls[w.addr, x.addr, y.addr, w.reply_ttl, x.reply_ttl, y.reply_ttl] += 1
     info.triplets.add((w.addr, x.addr, y.addr))
-    info.dst_asns.add((x.addr, _ip2as[dst]))
+    info.dsts.add((x.addr, y.addr, dst))
 
 def are_adjacent(b1, b2):
     return b1[:-1] == b2[:-1] and abs(b1[-1] - b2[-1]) == 1
@@ -122,7 +122,7 @@ def candidates(filename: str, ip2as=None, info: FinderInfo = None):
         info = FinderInfo()
     with WartsReader(filename) as f:
         for trace in f:
-            if include_dsts is not None and trace.dst not in include_dsts: continue
+            # if include_dsts is not None and trace.dst not in include_dsts: continue
             if not trace.hops: continue
             trace.prune_private(_ip2as)
             if not trace.hops: continue
@@ -158,54 +158,6 @@ def candidates(filename: str, ip2as=None, info: FinderInfo = None):
                 if x.type != ICMPType.echo_reply:
                     info.last[x.addr] += 1
     return info
-
-def lasttwo(filename, ip2as):
-    total = set()
-    reject = set()
-    confirm = set()
-    rejpaths = set()
-    with WartsReader(filename) as f:
-        for trace in f:
-            total.add(trace.dst)
-            if trace.stop_reason == 'COMPLETED':
-                if len(trace.hops) >= 2:
-                    x = trace.hops[-2]
-                    y = trace.hops[-1]
-                    if x.probe_ttl == y.probe_ttl - 1:
-                        if y.type == ICMPType.echo_reply:
-                            subnet = are_adjacent(x.set_packed(), y.set_packed())
-                            if subnet:
-                                confirm.add(y.addr)
-                                continue
-                            # else:
-                asns = [ip2as[h.addr] for h in trace.hops]
-                rejpaths.add((y.addr, tuple(asns)))
-                reject.add(y.addr)
-    return confirm, reject, total, rejpaths
-
-# def lasttwo(filename, ip2as):
-#     total = set()
-#     reject = set()
-#     confirm = set()
-#     rejpaths = set()
-#     with WartsReader(filename) as f:
-#         for trace in f:
-#             total.add(trace.dst)
-#             if trace.stop_reason == 'COMPLETED':
-#                 if len(trace.hops) >= 2:
-#                     x = trace.hops[-2]
-#                     y = trace.hops[-1]
-#                     if x.probe_ttl == y.probe_ttl - 1:
-#                         if y.type == ICMPType.echo_reply:
-#                             subnet = are_adjacent(x.set_packed(), y.set_packed())
-#                             if subnet:
-#                                 confirm.add(y.addr)
-#                                 continue
-#                             # else:
-#                 asns = [ip2as[h.addr] for h in trace.hops]
-#                 rejpaths.add((y.addr, tuple(asns)))
-#                 reject.add(y.addr)
-#     return confirm, reject, total, rejpaths
 
 _addrs = None
 _directory = None

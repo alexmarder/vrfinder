@@ -58,6 +58,12 @@ class CandResults(Results):
     def __repr__(self):
         return super().__repr__() + ' U2 {:,d} M {:,d}'.format(len(self.unknown2), len(self.missing))
 
+    def byasn(self, ip2as: IP2AS):
+        conf = byasn(self.confirmed, ip2as)
+        rej = byasn(self.reject, ip2as)
+        unk = byasn(self.missing | self.unknown | self.unknown2, ip2as)
+        return conf, rej, unk
+
     def fix_rejects(self, ip2as: IP2AS, info: CandidateInfo):
         keep = set()
         prev = info.tripprev()
@@ -164,3 +170,9 @@ def parse_lasttwo_parallel(files, ip2as):
         for results in pb.iterator(pool.imap_unordered(lasttwo, files)):
             allresults.update(results)
     return allresults
+
+def byasn(addrs, ip2as: IP2AS):
+    asns = defaultdict(set)
+    for addr in addrs:
+        asns[ip2as[addr]].add(addr)
+    return asns

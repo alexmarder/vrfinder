@@ -4,6 +4,8 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import Set, Dict
 
+import pandas as pd
+
 from traceutils.utils.net import otherside as otherside_err, prefix_addrs
 
 from finder_info import FinderInfo
@@ -140,6 +142,86 @@ class FinderPrune(FinderInfo):
             return info
         self.prune_spoofing()
         self.fixfours()
+
+    def prune_tracetest(self, traceres, duplicate=False):
+        if duplicate:
+            info = FinderPrune.duplicate(self)
+            info.prune_tracetest(duplicate=False)
+            return info
+        rej = traceres.reject - traceres.confirmed
+        for r in rej:
+            self.middletwos.pop(r, None)
+            self.middlefours.pop(r, None)
+            self.lasttwos.pop(r, None)
+            self.lastfours.pop(r, None)
+
+    def prune_dests(self, destres, duplicate=False):
+        if duplicate:
+            info = FinderPrune.duplicate(self)
+            info.prune_dests(destres, duplicate=False)
+            return info
+        rej = destres.reject - destres.confirmed
+        for r in rej:
+            self.middletwos.pop(r, None)
+            self.middlefours.pop(r, None)
+
+    def row(self, **kwargs):
+        echo = self.echo_cfas().keys()
+        middle = self.middle_cfas().keys() - echo
+        last = self.last_cfas().keys() - echo - middle
+        total = echo | middle | last
+        row = {'middle': len(middle), 'last': len(last), 'echo': len(echo), 'total': len(total)}
+        row.update(kwargs)
+        return row
+
+    def prune_all(self, valid=None, aliases=None, traceres=None, destres=None, duplicate=True):
+        if duplicate:
+            info = FinderPrune.duplicate(self)
+            info.prune_all(valid, aliases, traceres=traceres, destres=destres, duplicate=False)
+            return info
+        # Spoofing
+        self.prune_spoofing()
+        # Fix Fours
+        self.fixfours()
+        # Ping Test
+        self.prune_pingtest(valid=valid)
+        # Router Cycle
+        self.prune_router_loops(aliases=aliases)
+        # Trace Test
+        if traceres:
+            self.prune_tracetest(traceres)
+        # Dest Test
+        if destres:
+            self.prune_dests(destres)
+
+    def rows(self, valid=None, aliases=None, traceres=None, destres=None, duplicate=True):
+        if duplicate:
+            info = FinderPrune.duplicate(self)
+            return info.rows(valid, aliases, traceres=traceres, destres=destres, duplicate=False)
+        rows = []
+        # Initial
+        rows.append(self.row(stage='Initial'))
+        # Spoofing
+        self.prune_spoofing()
+        rows.append(self.row(stage='Spoofing'))
+        # Fix Fours
+        self.fixfours()
+        rows.append(self.row(stage='Fours Overlap'))
+        # Ping Test
+        self.prune_pingtest(valid=valid)
+        rows.append(self.row(stage='Ping Test'))
+        # Router Cycle
+        self.prune_router_loops(aliases=aliases)
+        rows.append(self.row(stage='Router Cycle'))
+        # Trace Test
+        if traceres:
+            self.prune_tracetest(traceres)
+            rows.append(self.row(stage='Trace Test'))
+        # Dest Test
+        if destres:
+            self.prune_dests(destres)
+            rows.append(self.row(stage='Middle Test'))
+        return pd.DataFrame(rows)
 
     def tripaddrs(self):
         return {a for t in self.triplets for a in t}
