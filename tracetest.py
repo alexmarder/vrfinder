@@ -123,6 +123,22 @@ class TraceResult(Results):
                 res.missing.add(x)
         return res
 
+    # def match_cfas(self, cfas):
+    #     confirmed = set()
+    #     pairs = set()
+    #     for y in cfas:
+    #         x = otherside(y, 2)
+    #         pairs.add((x, y))
+    #         try:
+    #             x = otherside(y, 4)
+    #             pairs.add((x, y))
+    #         except:
+    #             pass
+    #     for x, y in pairs:
+    #         if y in self.confirmed:
+    #             confirmed.add((x, y))
+    #     return confirmed
+
     def update(self, results):
         for key, value in vars(self).items():
             value.update(getattr(results, key))

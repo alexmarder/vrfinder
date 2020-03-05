@@ -29,18 +29,22 @@ class FinderInfo:
         self.lasttwos = Counter()
         self.dsts = set()
         self.dst_asns = set()
-        self.loops = Counter()
+        # self.loops = Counter()
+        self.looptwos = Counter()
+        self.loopfours = Counter()
+        self.loopother = Counter()
 
     def __repr__(self):
-        return 'M2 {m2:,d} M4 {m4:,d} L2 {l2:,d} L4 {l4:,d} E2 {e2:,d} E4 {e4:,d} X {ixps:,d}'.format(
+        return 'M2 {m2:,d} M4 {m4:,d} L2 {l2:,d} L4 {l4:,d} E2 {e2:,d} E4 {e4:,d} X {ixps:,d} C2 {c2:,d} C4 {c4:,d}'.format(
             m2=len(self.middletwos), m4=len(self.middlefours), l2=len(self.lasttwos), l4=len(self.lastfours),
-            e2=len(self.echotwos), e4=len(self.echofours), ixps=len(self.ixps)
+            e2=len(self.echotwos), e4=len(self.echofours), ixps=len(self.ixps), c2=len(self.looptwos),
+            c4=len(self.loopfours)
         )
 
     def __str__(self):
         s = repr(self)
-        return '{repr} L {last:,d} C {loop:,d}'.format(
-            repr=s, middle=len(self.middle), last=len(self.last), loop=len(self.loops)
+        return '{repr} L {last:,d}'.format(
+            repr=s, middle=len(self.middle), last=len(self.last)
         )
 
     def dump(self, filename):

@@ -5,7 +5,8 @@ from argparse import ArgumentParser
 import finder
 
 v1dates = [
-    [2011, 4, 30], [2011, 10, 30], [2012, 7, 31], [2013, 4, 30], [2013, 7, 31], [2014, 4, 30], [2014, 12, 31],
+    [2011, 4, 30], [2011, 10, 30], [2012, 7, 31], [2013, 4, 30],
+    [2013, 7, 31], [2014, 4, 30], [2014, 12, 31],
     [2015, 8, 31],
     [2016, 3, 14]
 ]
@@ -40,7 +41,7 @@ def prep_dates(type):
 
 def pdbfile(year, month, day, version):
     if version == 1:
-        pdb = '/data/external/peeringdb-dumps/v1/{year}/{month:02d}/peeringdb_dump_{year}_{month:02d}_{day:02d}.sqlite'
+        pdb = '/data/external/peeringdb-dumps/{year}/{month:02d}/peeringdb_dump_{year}_{month:02d}_{day:02d}.sqlite'
     elif version == 2:
         pdb = '/data/external/peeringdb-dumps/{year}/{month:02d}/peeringdb_2_dump_{year}_{month:02d}_{day:02d}.sqlite'
     else:
@@ -56,8 +57,10 @@ def main():
     args, extra = parser.parse_known_args()
     os.makedirs(args.dir, exist_ok=True)
     for year, month, day, version in prep_dates('team' if args.team else 'prefix'):
+        files = '{type}/{year}{month:02d}.files'.format(type='files' if args.team else 'prefixtest', year=year, month=month)
         pdb = pdbfile(year, month, day, version)
-        argv = '-f prefixtest/{year}{month:02d}.files -I {pdb} -o {dir}/{year}{month:02d}.rttls.pickle'.format(year=year, month=month, day=day, pdb=pdb, dir=args.dir)
+        output = os.path.join(args.dir, '{year}{month:02d}.pickle'.format(year=year, month=month))
+        argv = '-f {files} -I {pdb} -o {output}'.format(files=files, pdb=pdb, output=output)
         print(argv.split() + extra)
         finder.main(argv.split() + extra)
 

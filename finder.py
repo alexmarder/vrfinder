@@ -25,18 +25,22 @@ class FakeHop:
     addr = None
     reply_ttl = None
 
-def add_pair(info: FinderInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Hop, end: bool, dst: str):
+def add_pair(info: FinderInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Hop, end: bool, loop: bool, dst: str):
     if ptype == 2 or ptype == -2:
         echo_cfas = info.echotwos
         middle_cfas = info.middletwos
         last_cfas = info.lasttwos
+        loop_cfas = info.looptwos
     elif ptype == 4 or ptype == -4:
         echo_cfas = info.echofours
         middle_cfas = info.middlefours
         last_cfas = info.lastfours
+        loop_cfas = info.loopfours
     else:
-        return
-    if end:
+        return False
+    if loop:
+        loop_cfas[x.addr] += 1
+    elif end:
         if y.type == ICMPType.echo_reply:
             echo_cfas[x.addr] += 1
         else:
@@ -50,6 +54,7 @@ def add_pair(info: FinderInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Ho
     info.rttls[w.addr, x.addr, y.addr, w.reply_ttl, x.reply_ttl, y.reply_ttl] += 1
     info.triplets.add((w.addr, x.addr, y.addr))
     info.dsts.add((x.addr, y.addr, dst))
+    return True
 
 def are_adjacent(b1, b2):
     return b1[:-1] == b2[:-1] and abs(b1[-1] - b2[-1]) == 1
@@ -126,37 +131,44 @@ def candidates(filename: str, ip2as=None, info: FinderInfo = None):
             if not trace.hops: continue
             trace.prune_private(_ip2as)
             if not trace.hops: continue
-            trace.prune_loops(keepfirst=True)
-            if not trace.hops: continue
-            if trace.loop:
-                for x, y in zip(trace.loop, trace.loop[1:]):
-                    info.loops[x.addr, y.addr] += 1
+            loopstart = trace.mark_loop()
+            # trace.prune_loops(keepfirst=True)
+            # if not trace.hops: continue
+            # if trace.loop:
+            #     looppacked = [hop.set_packed() for hop in trace.loop]
+            #     for x, y in zip(trace.loop, trace.loop[1:]):
+            #         info.loops[x.addr, y.addr] += 1
             packed = [hop.set_packed() for hop in trace.hops]
             for i in range(len(packed) - (1 if not middle_only else 2)):
                 b1 = packed[i]
                 b2 = packed[i+1]
                 if b1 == b2:
                     continue
+                end = i+2 == len(packed)
+                loop = i >= loopstart
                 x = trace.hops[i]
                 y = trace.hops[i+1]
                 w: Union[Hop, FakeHop] = select_w(trace, i, x.addr)
                 info.middle[x.addr] += 1
+                added = False
                 if x.probe_ttl == y.probe_ttl - 1:
                     if x.type == ICMPType.time_exceeded and (y.addr != trace.dst or y.type == ICMPType.time_exceeded or y.type == ICMPType.echo_reply):
                         xasn = _ip2as.asn_packed(b1)
                         if xasn >= 0:
                             if are_adjacent(b1, b2):
                                 size = valid_pair(b1, b2)
-                                add_pair(info=info, ptype=size, w=w, x=x, y=y, end=i+2 == len(packed), dst=trace.dst)
+                                added = add_pair(info=info, ptype=size, w=w, x=x, y=y, end=end, loop=loop, dst=trace.dst)
                         elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
                             wasn = _ip2as.asn_packed(packed[i-1]) if i > 0 else None
                             info.ixps.add((wasn, x.addr, y.addr))
                             info.ixp_adjs[x.addr, y.addr] += 1
                             info.triplets.add((w.addr, x.addr, y.addr))
+                        if not added and loop:
+                            info.loopother[x.addr] += 1
             if not middle_only:
                 x = trace.hops[-1]
                 if x.type != ICMPType.echo_reply:
-                    info.last[x.addr] += 1
+                    info.last[x.addr, _ip2as[trace.dst]] += 1
     return info
 
 _addrs = None

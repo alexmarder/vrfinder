@@ -5,6 +5,8 @@ from copy import deepcopy
 from typing import Set, Dict
 
 import pandas as pd
+from traceutils.as2org.as2org import AS2Org
+from traceutils.radix.ip2as import IP2AS
 
 from traceutils.utils.net import otherside as otherside_err, prefix_addrs
 
@@ -19,7 +21,7 @@ class FinderPrune(FinderInfo):
     @classmethod
     def duplicate(cls, info):
         newinfo = cls()
-        dps = ['middletwos', 'middlefours', 'lasttwos', 'lastfours', 'echotwos', 'echofours']
+        dps = ['middletwos', 'middlefours', 'lasttwos', 'lastfours', 'echotwos', 'echofours', 'looptwos', 'loopfours']
         for k, v in vars(info).items():
             if k in dps:
                 try:
@@ -30,6 +32,17 @@ class FinderPrune(FinderInfo):
             else:
                 setattr(newinfo, k, getattr(info, k))
         return newinfo
+
+    def addlast(self, pairs, duplicate=False):
+        if duplicate:
+            info = self.duplicate(self)
+            info.addlast(pairs)
+            return info
+        for x, y in pairs:
+            if x == otherside(y, 2):
+                self.echotwos[x] += 1
+            else:
+                self.echofours[x] += 1
 
     def fixfours(self, duplicate=False):
         if duplicate:
@@ -46,6 +59,9 @@ class FinderPrune(FinderInfo):
                 self.echofours.pop(k)
             if k in self.lastfours:
                 self.lastfours.pop(k)
+        for k in self.looptwos:
+            if k in self.loopfours:
+                self.loopfours.pop(k)
 
     def fours(self):
         return self.middlefours + self.lastfours + self.echofours
@@ -61,6 +77,14 @@ class FinderPrune(FinderInfo):
 
     def echo_cfas(self):
         return self.echofours + self.echotwos
+
+    def lastdsts(self):
+        dasns = defaultdict(set)
+        for addr, dasn in self.last:
+            if addr not in self.middle:
+                dasns[addr].add(dasn)
+        dasns.default_factory = None
+        return dasns
 
     def pairs(self, middle=True, echo=True, last=True, num=False):
         # pairs = Counter()
@@ -89,6 +113,24 @@ class FinderPrune(FinderInfo):
         with open(file, 'w') as f:
             f.writelines('{}\n'.format(addr) for addr in toping)
 
+    def prune_ixps(self, ixpaddrs: Dict[str, int], as2org: AS2Org):
+        ixptups = defaultdict(set)
+        for pasn, x, y in self.ixps:
+            ixptups[x].add(pasn)
+        keep = set()
+        for x, pasns in ixptups.items():
+            if x in ixpaddrs:
+                asn = ixpaddrs[x]
+                try:
+                    org = as2org[asn]
+                except:
+                    print(asn, type(asn))
+                    raise
+                orgs = {as2org[asn] for asn in pasns if asn is not None}
+                if org in orgs:
+                    keep.add(x)
+        self.ixps = keep
+
     def prune_pingtest(self, valid: Dict[str, int], duplicate=False):
         if duplicate:
             info = self.duplicate(self)
@@ -109,7 +151,7 @@ class FinderPrune(FinderInfo):
             info.prune_router_loops(aliases, duplicate=False)
             return info
         for x, y, z in self.triplets:
-            if aliases.nids.get(x, -1) == aliases.nids.get(y, -2):
+            if aliases.nid.get(x, -1) == aliases.nid.get(y, -2):
                 if z == otherside(y, 4):
                     if y in self.middlefours:
                         self.middlefours.pop(y)
@@ -117,6 +159,7 @@ class FinderPrune(FinderInfo):
                         self.echofours.pop(y)
                     if y in self.lastfours:
                         self.lastfours.pop(y)
+                    self.loopfours[y] += 1
                 elif z == otherside(y, 2):
                     if y in self.middletwos:
                         self.middletwos.pop(y)
@@ -124,6 +167,7 @@ class FinderPrune(FinderInfo):
                         self.echotwos.pop(y)
                     if y in self.lasttwos:
                         self.lasttwos.pop(y)
+                    self.looptwos[y] += 1
 
     def prune_spoofing(self, duplicate=False):
         if duplicate:
@@ -170,7 +214,13 @@ class FinderPrune(FinderInfo):
         middle = self.middle_cfas().keys() - echo
         last = self.last_cfas().keys() - echo - middle
         total = echo | middle | last
-        row = {'middle': len(middle), 'last': len(last), 'echo': len(echo), 'total': len(total)}
+        loop = self.looptwos.keys() | self.loopfours.keys()
+        row = {
+            'middle': len(middle), 'last': len(last), 'echo': len(echo), 'vrf': len(total), 'loop': len(loop),
+            'middlep': 100 * len(middle) / len(self.middle), 'lastp': 100 * len(last) / len(self.middle),
+            'echop': 100 * len(echo) / len(self.middle),
+            'vrfp': 100 * len(total) / len(self.middle), 'loopp': 100 * len(loop) / len(self.middle), 'addrs': len(self.middle)
+        }
         row.update(kwargs)
         return row
 
@@ -269,6 +319,15 @@ class FinderPruneContainer(dict):
             if targets:
                 with open(os.path.join(directory, '{}.addrs'.format(vp)), 'w') as f:
                     f.writelines('{}\n'.format(target) for target in targets)
+
+    def last_output(self, directory, dasns, ip2as: IP2AS, cfas):
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        for vp, addrs in dasns.items():
+            addrs = {a for a, dests in addrs.items() if ip2as[a] not in dests}
+            targets = {otherside(addr, 2) for addr in addrs}
+            targets |= {otherside(addr, 4) for addr in addrs}
+            targets -= cfas
 
 def create_pairs(cands, subnet, num=False):
     for x in cands:

@@ -1,0 +1,15 @@
+{
+  "ip2as": "ip2as/202001.ip2as",
+  "as2org": {
+    "as2org": "/data/external/topology-asdata/as-organizations/20200101.as-org2info.txt.gz"
+  },
+  "as-rels": {
+    "rels": "/data/external/topology-asdata/as-relationships/serial-1/20200101.as-rel.txt.bz2",
+    "cone": "/data/external/topology-asdata/as-relationships/serial-1/20200101.ppdc-ases.txt.bz2"
+  },
+  "jsonwarts": {
+    "files": "202001.tocopy"
+  },
+  "processes": 25,
+  "max_iterations": 5
+}
