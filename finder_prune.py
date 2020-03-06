@@ -150,8 +150,12 @@ class FinderPrune(FinderInfo):
             info = self.duplicate(self)
             info.prune_router_loops(aliases, duplicate=False)
             return info
+        try:
+            nids = aliases.nid
+        except:
+            nids = aliases.nids
         for x, y, z in self.triplets:
-            if aliases.nid.get(x, -1) == aliases.nid.get(y, -2):
+            if nids.get(x, -1) == nids.get(y, -2):
                 if z == otherside(y, 4):
                     if y in self.middlefours:
                         self.middlefours.pop(y)
