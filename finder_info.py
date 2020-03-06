@@ -31,8 +31,7 @@ class FinderInfo:
         self.dst_asns = set()
         # self.loops = Counter()
         self.looptwos = Counter()
-        self.loopfours = Counter()
-        self.loopother = Counter()
+        self.loopfours = Counter()z
 
     def __repr__(self):
         return 'M2 {m2:,d} M4 {m4:,d} L2 {l2:,d} L4 {l4:,d} E2 {e2:,d} E4 {e4:,d} X {ixps:,d} C2 {c2:,d} C4 {c4:,d}'.format(
