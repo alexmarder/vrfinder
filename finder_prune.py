@@ -21,7 +21,7 @@ class FinderPrune(FinderInfo):
     @classmethod
     def duplicate(cls, info):
         newinfo = cls()
-        dps = ['middletwos', 'middlefours', 'lasttwos', 'lastfours', 'echotwos', 'echofours', 'looptwos', 'loopfours']
+        dps = ['middletwos', 'middlefours', 'lasttwos', 'lastfours', 'echotwos', 'echofours', 'looptwos', 'loopfours', 'ixps']
         for k, v in vars(info).items():
             if k in dps:
                 try:
@@ -113,7 +113,11 @@ class FinderPrune(FinderInfo):
         with open(file, 'w') as f:
             f.writelines('{}\n'.format(addr) for addr in toping)
 
-    def prune_ixps(self, ixpaddrs: Dict[str, int], as2org: AS2Org):
+    def prune_ixps(self, ixpaddrs: Dict[str, int], as2org: AS2Org, duplicate=False):
+        if duplicate:
+            info = self.duplicate(self)
+            info.prune_ixps(ixpaddrs, as2org, duplicate=False)
+            return info
         ixptups = defaultdict(set)
         for pasn, x, y in self.ixps:
             ixptups[x].add(pasn)
