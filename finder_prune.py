@@ -78,6 +78,9 @@ class FinderPrune(FinderInfo):
     def echo_cfas(self):
         return self.echofours + self.echotwos
 
+    def cfas(self):
+        return self.fours().keys() | self.twos().keys() | self.ixps
+
     def lastdsts(self):
         dasns = defaultdict(set)
         for addr, dasn in self.last:
@@ -159,7 +162,10 @@ class FinderPrune(FinderInfo):
         except:
             nids = aliases.nids
         for x, y, z in self.triplets:
-            if nids.get(x, -1) == nids.get(y, -2):
+            rx = nids.get(x, -1)
+            ry = nids.get(y, -2)
+            rz = nids.get(z, -3)
+            if rx == rz or ry == rz:
                 if z == otherside(y, 4):
                     if y in self.middlefours:
                         self.middlefours.pop(y)

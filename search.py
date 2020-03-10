@@ -24,9 +24,10 @@ def search(filename, ip2as=None):
     # ytest = '12.226.90.11'
     with WartsReader(filename) as f:
         for trace in f:
+            # print('hello')
             if trace.hops:
                 addrs = trace.addrs()
-                if xtest in addrs and ytest in addrs:
+                if xtest in addrs and (ytest is None or ytest in addrs):
                     return trace
                 continue
                 # if xtest in addrs and _ip2as[trace.dst] == ytest:

@@ -12,7 +12,7 @@ from traceutils.ixps import AbstractPeeringDB, create_peeringdb
 from traceutils.progress.bar import Progress
 from traceutils.radix.ip2as import IP2AS, create_table
 from traceutils.scamper.hop import Hop, ICMPType
-from traceutils.scamper.warts import WartsReader
+from traceutils.scamper.warts import WartsReader, WartsHop
 from traceutils.utils.net import inet_fix
 
 from finder_info import FinderInfo, FinderInfoContainer
@@ -24,8 +24,9 @@ include_dsts = None
 class FakeHop:
     addr = None
     reply_ttl = None
+    reply_ipid = None
 
-def add_pair(info: FinderInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Hop, end: bool, loop: bool, dst: str):
+def add_pair(info: FinderInfo, ptype: int, w: Union[WartsHop, FakeHop], x: WartsHop, y: WartsHop, end: bool, loop: bool, dst: str):
     if ptype == 2 or ptype == -2:
         echo_cfas = info.echotwos
         middle_cfas = info.middletwos
@@ -52,6 +53,7 @@ def add_pair(info: FinderInfo, ptype: int, w: Union[Hop, FakeHop], x: Hop, y: Ho
     else:
         middle_cfas[x.addr] += 1
     info.rttls[w.addr, x.addr, y.addr, w.reply_ttl, x.reply_ttl, y.reply_ttl] += 1
+    # info.ipids[w.addr, x.addr, y.addr, w.reply_ipid, x.reply_ipid, y.reply_ipid] += 1
     info.triplets.add((w.addr, x.addr, y.addr))
     info.dsts.add((x.addr, y.addr, dst))
     return True
@@ -150,21 +152,18 @@ def candidates(filename: str, ip2as=None, info: FinderInfo = None):
                 y = trace.hops[i+1]
                 w: Union[Hop, FakeHop] = select_w(trace, i, x.addr)
                 info.middle[x.addr] += 1
-                added = False
                 if x.probe_ttl == y.probe_ttl - 1:
                     if x.type == ICMPType.time_exceeded and (y.addr != trace.dst or y.type == ICMPType.time_exceeded or y.type == ICMPType.echo_reply):
                         xasn = _ip2as.asn_packed(b1)
                         if xasn >= 0:
                             if are_adjacent(b1, b2):
                                 size = valid_pair(b1, b2)
-                                added = add_pair(info=info, ptype=size, w=w, x=x, y=y, end=end, loop=loop, dst=trace.dst)
+                                add_pair(info=info, ptype=size, w=w, x=x, y=y, end=end, loop=loop, dst=trace.dst)
                         elif xasn <= -100 and xasn == _ip2as.asn_packed(b2):
                             wasn = _ip2as.asn_packed(packed[i-1]) if i > 0 else None
                             info.ixps.add((wasn, x.addr, y.addr))
                             info.ixp_adjs[x.addr, y.addr] += 1
                             info.triplets.add((w.addr, x.addr, y.addr))
-                        if not added and loop:
-                            info.loopother[x.addr] += 1
             if not middle_only:
                 x = trace.hops[-1]
                 if x.type != ICMPType.echo_reply:
