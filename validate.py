@@ -95,3 +95,8 @@ def load_addrs_tsv(file):
             addrs.add(y)
             addrs.update(xs.split(','))
     return addrs
+
+def summarize(df):
+    rows = []
+    for dataset, g in df.groupby('dataset'):
+        d = dict(g.res.value_counts())

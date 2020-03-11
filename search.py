@@ -83,4 +83,4 @@ def search_parallel(filenames: List[WartsFile], x, y, ip2as=None, poolsize=35):
 def printtrace(trace: Trace, ip2as=None):
     for hop in trace.allhops:
         asn = ip2as[hop.addr] if ip2as is not None else 0
-        print('{:02d}: {:15} {:10} {:2} {:2} {:3} {:5}'.format(hop.probe_ttl, hop.addr, asn, hop.icmp_type, hop.icmp_code, hop.reply_ttl, hop.reply_ipid))
+        print('{:02d}: {:15} {:10} {:2} {:2} {:3} {:5} {}'.format(hop.probe_ttl, hop.addr, asn, hop.icmp_type, hop.icmp_code, hop.reply_ttl, hop.reply_ipid, bool(hop.icmpext)))

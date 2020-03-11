@@ -39,6 +39,8 @@ class FinderPrune(FinderInfo):
             info.addlast(pairs)
             return info
         for x, y in pairs:
+            if not (x in self.middle or x in self.last):
+                continue
             if x == otherside(y, 2):
                 self.echotwos[x] += 1
             else:
