@@ -5,6 +5,8 @@ from collections import namedtuple, Counter
 from os.path import basename
 from typing import Set, Dict, Tuple
 
+import numpy as np
+
 from traceutils.as2org.as2org import AS2Org
 from traceutils.file2 import fopen
 from traceutils.ixps.ixps import PeeringDB
@@ -25,14 +27,15 @@ class Validate:
         self.as2org = as2org
         self.peeringdb = peeringdb
 
-    def validate(self, info: FinderPrune, vpns, dfns, prevs, asn):
+    def validate(self, info: FinderPrune, vpns, dfns, prevs, asn, **kwargs):
         org = self.as2org[asn]
         results = []
         middle = info.middle_cfas()
         last = info.last_cfas()
         echo = info.echo_cfas()
+        lastaddrs = {a for a, _ in info.last}
         for addr in vpns:
-            if not (addr in info.middle or addr in info.last):
+            if not (addr in info.middle or addr in lastaddrs):
                 continue
             if addr in middle:
                 results.append(Result(addr, 'tp', 'm'))
@@ -40,7 +43,7 @@ class Validate:
                 results.append(Result(addr, 'tp', 'l'))
             elif addr in echo:
                 results.append(Result(addr, 'tp', 'e'))
-            elif addr in info.ixps:
+            elif addr in info.ixpcfas:
                 results.append(Result(addr, 'tp', 'x'))
             else:
                 if addr in prevs:
@@ -53,11 +56,14 @@ class Validate:
                 results.append(Result(addr, 'fp', 'l'))
             elif addr in echo:
                 results.append(Result(addr, 'fp', 'e'))
-            elif addr in info.ixps:
+            elif addr in info.ixpcfas:
                 results.append(Result(addr, 'fp', 'x'))
             else:
                 results.append(Result(addr, 'tn', 't'))
-        return pd.DataFrame(results)
+        df = pd.DataFrame(results)
+        for k, v in kwargs.items():
+            df[k] = v
+        return df
 
     def validate_multi(self, info: FinderPrune, vpns: Dict[str, Set[str]], dfns: Dict[str, Set[str]], prevs, asns: Dict[str, int]):
         dfs = []
@@ -96,7 +102,22 @@ def load_addrs_tsv(file):
             addrs.update(xs.split(','))
     return addrs
 
-def summarize(df):
+def summarize(df, **kwargs):
     rows = []
     for dataset, g in df.groupby('dataset'):
         d = dict(g.res.value_counts())
+        tp = d.get('tp', 0)
+        fp = d.get('fp', 0)
+        fn = d.get('fn', 0)
+        tn = d.get('tn', 0)
+        ppv = tp / (tp + fp) if tp + fp > 0 else np.nan
+        tpr = tp / (tp + fn) if tp + fn > 0 else np.nan
+        d = {'tp': tp, 'fp': fp, 'fn': fn, 'tn': tn, 'ppv': ppv, 'tpr': tpr, 'dataset': dataset}
+        # d['ppv'] = ppv
+        # d['tpr'] = tpr
+        # d['dataset'] = dataset
+        rows.append(d)
+    df = pd.DataFrame(rows)
+    for k, v in kwargs.items():
+        df[k] = v
+    return df

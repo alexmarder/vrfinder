@@ -16,6 +16,7 @@ class FinderInfo:
         self.ixp_tuples = set()
         self.middle = Counter()
         self.last = Counter()
+        self.lastechos = Counter()
         self.tuples = set()
         self.triplets = set()
         self.nounreach: Set[str] = set()
@@ -84,7 +85,6 @@ class FinderInfo:
             d = d.__dict__
         for k, v in d.items():
             getattr(info, k).update(v)
-        # info.create_ixps(info.ixps)
         return info
 
     def update(self, info):

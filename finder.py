@@ -153,6 +153,7 @@ def candidates(filename: str, ip2as=None, info: FinderInfo = None):
                 w: Union[Hop, FakeHop] = select_w(trace, i, x.addr)
                 info.middle[x.addr] += 1
                 if x.probe_ttl == y.probe_ttl - 1:
+                    added = False
                     if x.type == ICMPType.time_exceeded and (y.addr != trace.dst or y.type == ICMPType.time_exceeded or y.type == ICMPType.echo_reply):
                         xasn = _ip2as.asn_packed(b1)
                         if xasn >= 0:
@@ -164,6 +165,9 @@ def candidates(filename: str, ip2as=None, info: FinderInfo = None):
                             info.ixps.add((wasn, x.addr, y.addr))
                             info.ixp_adjs[x.addr, y.addr] += 1
                             info.triplets.add((w.addr, x.addr, y.addr))
+                    if not added:
+                        if y.type == ICMPType.echo_reply:
+                            info.lastechos[x.addr, _ip2as[trace.dst]] += 1
             if not middle_only:
                 x = trace.hops[-1]
                 if x.type != ICMPType.echo_reply:
